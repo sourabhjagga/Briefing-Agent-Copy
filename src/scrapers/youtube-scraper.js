@@ -171,25 +171,29 @@ class YoutubeScraper {
     }
     const outputPath = path.join(tempDir, `${videoId}.mp3`);
 
-    let cookiesHeader = '';
+    let ytdlAgent = null;
     const cookiePath = path.resolve(__dirname, '../../data/youtube_cookies.txt');
     if (fs.existsSync(cookiePath)) {
       try {
         const raw = fs.readFileSync(cookiePath, 'utf8');
         const lines = raw.split('\n');
-        const pairs = [];
+        const cookieArray = [];
         for (const line of lines) {
           if (!line || line.startsWith('#')) continue;
           const parts = line.split('\t');
           if (parts.length >= 7) {
-            const name = parts[5].trim();
-            const value = parts[6].trim();
-            pairs.push(`${name}=${value}`);
+            cookieArray.push({
+              domain: parts[0].trim(),
+              path: parts[2].trim(),
+              secure: parts[3].trim().toUpperCase() === 'TRUE',
+              name: parts[5].trim(),
+              value: parts[6].trim()
+            });
           }
         }
-        if (pairs.length > 0) {
-          cookiesHeader = pairs.join('; ');
-          logger.info(`🍪 Parsed ${pairs.length} authenticated cookies from youtube_cookies.txt.`);
+        if (cookieArray.length > 0) {
+          ytdlAgent = ytdl.createAgent(cookieArray);
+          logger.info(`🍪 Parsed ${cookieArray.length} authenticated cookies and created ytdl agent.`);
         }
       } catch (err) {
         logger.error(`Failed to parse youtube_cookies.txt: ${err.message}`);
@@ -197,20 +201,15 @@ class YoutubeScraper {
     }
 
     try {
-      logger.info(`📥 Downloading raw low-quality audio for video ${videoId} with verified cookies...`);
+      logger.info(`📥 Downloading raw low-quality audio for video ${videoId} with authenticated ytdl agent...`);
       await new Promise((resolve, reject) => {
         const downloadOptions = {
           filter: 'audioonly',
           quality: 'lowestaudio'
         };
 
-        if (cookiesHeader) {
-          downloadOptions.requestOptions = {
-            headers: {
-              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-              'Cookie': cookiesHeader
-            }
-          };
+        if (ytdlAgent) {
+          downloadOptions.agent = ytdlAgent;
         }
 
         ytdl(`https://www.youtube.com/watch?v=${videoId}`, downloadOptions)
