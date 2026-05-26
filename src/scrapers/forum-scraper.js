@@ -145,11 +145,37 @@ class ForumScraper {
     try {
       // Fetch What's New which requires user session for full contents
       const res = await this._executeGetRequest('https://technofino.in/community/whats-new/posts/', cookiesArray);
+      if (!res || !res.data) return false;
 
       const $ = cheerio.load(res.data);
-      // Check for XenForo logged-in marker (like href containing logout)
+      
+      // 1. Check for logged-in indicators
+      const hasMemberNav = $('.p-navgroup--member').length > 0;
       const hasLogout = $('a[href*="logout"]').length > 0;
-      return hasLogout;
+      const isHtmlLoggedIn = $('html[data-logged-in="true"]').length > 0;
+      const hasAccountLink = $('a[href*="account/"]').length > 0;
+      
+      if (hasMemberNav || hasLogout || isHtmlLoggedIn || hasAccountLink) {
+        return true;
+      }
+      
+      // 2. Check for guest indicators
+      const hasGuestNav = $('.p-navgroup--guest').length > 0;
+      const isHtmlGuest = $('html[data-logged-in="false"]').length > 0;
+      
+      if (hasGuestNav || isHtmlGuest) {
+        logger.debug('Technofino session check: Page loaded successfully but detected as GUEST.');
+        return false;
+      }
+
+      // 3. Fallback: if we found threads on the page, the page loaded fine
+      const threadCount = $('.structItem--thread').length;
+      if (threadCount > 0) {
+        logger.debug(`Technofino session check: Loaded page successfully with ${threadCount} threads.`);
+        return true;
+      }
+
+      return false;
     } catch (err) {
       logger.debug(`Technofino session verification check failed: ${err.message}`);
       return false;

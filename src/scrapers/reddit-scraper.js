@@ -236,8 +236,12 @@ class RedditScraper {
 
   async _verifyRedditSession(cookiesArray = null) {
     try {
-      const res = await this._executeGetRequest('https://www.reddit.com/settings', cookiesArray);
-      // Under FlareSolverr, successfully getting settings means authenticated
+      const res = await this._executeGetRequest('https://www.reddit.com/settings/', cookiesArray);
+      if (!res || !res.data) return false;
+      // If we are redirected to login, or if the page contains login/register inputs, it's invalid
+      if (res.data.includes('login') && (res.data.includes('password') || res.data.includes('username'))) {
+        return false;
+      }
       return true;
     } catch (err) {
       return false;

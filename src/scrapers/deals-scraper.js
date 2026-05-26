@@ -215,11 +215,36 @@ class DealsScraper {
   async _verifySession(cookiesArray = null) {
     try {
       const res = await this._executeGetRequest('https://www.desidime.com/', cookiesArray);
+      if (!res || !res.data) return false;
 
       const $ = cheerio.load(res.data);
-      // DesiDime logged-in markers
-      const hasLogout = $('a[href*="/sign_out"], .signout, a[href*="/users/"]').length > 0;
-      return hasLogout;
+      
+      // 1. Check for active logged in indicators
+      const hasLogout = $('a[href*="/sign_out"], .signout').length > 0;
+      const hasProfile = $('.user-profile, .user-avatar, a[href*="/users/"]').filter((i, el) => {
+        const href = $(el).attr('href') || '';
+        return !href.includes('sign_in') && !href.includes('sign_up');
+      }).length > 0;
+
+      if (hasLogout || hasProfile) {
+        return true;
+      }
+
+      // 2. Check for explicit guest indicators
+      const hasSignIn = $('a[href*="/sign_in"], .login-btn, a[href*="/users/sign_in"]').length > 0;
+      if (hasSignIn) {
+        logger.debug('DesiDime session check: Detected as GUEST via sign-in button presence.');
+        return false;
+      }
+
+      // 3. Fallback: if we parsed any hot deals on the homepage, count it as valid
+      const postCount = $('.post-unit, .deal-box').length;
+      if (postCount > 0) {
+        logger.debug(`DesiDime session check: Loaded home successfully with ${postCount} posts.`);
+        return true;
+      }
+
+      return false;
     } catch (err) {
       logger.debug(`DesiDime session verification failed: ${err.message}`);
       return false;
