@@ -1,19 +1,16 @@
 # ─── STAGE 1: BUILDER ───────────────────────────────────────────────────
-FROM node:20-alpine AS builder
+FROM node:20-slim AS builder
 
 WORKDIR /app
-
-# Install native build tools for compiling better-sqlite3 native bindings
-RUN apk add --no-cache python3 make g++ gcc libc-dev
 
 # Copy package descriptors
 COPY package*.json ./
 
-# Install dependencies including native build compilations
+# Install dependencies (Downloads precompiled better-sqlite3 binary for glibc automatically)
 RUN npm install --omit=dev
 
 # ─── STAGE 2: RUNTIME ───────────────────────────────────────────────────
-FROM node:20-alpine AS runner
+FROM node:20-slim AS runner
 
 WORKDIR /app
 
@@ -22,8 +19,9 @@ ENV NODE_ENV=production
 ENV PORT=3000
 
 # Create application user and runtime directories for data persistence
-RUN addgroup -g 10011 -S agentsg && \
-    adduser -u 10011 -S agentuser -G agentsg && \
+# Debian standard groupadd and useradd used for container security
+RUN groupadd -r agentsg && \
+    useradd -r -g agentsg agentuser && \
     mkdir -p data logs && \
     chown -R agentuser:agentsg /app
 
