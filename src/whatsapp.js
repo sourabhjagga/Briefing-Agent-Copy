@@ -41,6 +41,23 @@ class WhatsAppListener {
       const combined = [...activeCc, ...activeDeals];
       
       this.targetIds = new Set(combined.map(id => id.trim().toLowerCase()));
+
+      // Seed manually added database source names into chatNameMap dynamically
+      const allSources = this.database.getAllSources();
+      let updated = false;
+      allSources.forEach(s => {
+        if (s.source_id && s.name) {
+          const id = s.source_id.trim().toLowerCase();
+          if (!this.chatNameMap[id]) {
+            this.chatNameMap[id] = s.name;
+            updated = true;
+          }
+        }
+      });
+      if (updated) {
+        this._saveChatNameMap();
+      }
+
       logger.info(`🎯 Mapped ${this.targetIds.size} active WhatsApp targets for strict ID filtering.`);
     } catch (err) {
       logger.error(`Failed to refresh WhatsApp targets: ${err.message}`);
@@ -110,6 +127,38 @@ class WhatsAppListener {
             this._saveChatNameMap();
             logger.info(`📡 Synced ${count} new/updated groups/newsletters (chats.upsert).`);
           }
+        }
+      });
+
+      this.sock.ev.on('messaging-history.set', ({ chats, contacts }) => {
+        let count = 0;
+        if (chats && Array.isArray(chats)) {
+          chats.forEach(c => {
+            if (c && c.id) {
+              const id = c.id.toLowerCase().trim();
+              if (id.includes('@newsletter') || id.includes('@g.us')) {
+                const name = c.name || (id.includes('@newsletter') ? 'WhatsApp Channel' : 'WhatsApp Group');
+                this.chatNameMap[id] = name;
+                count++;
+              }
+            }
+          });
+        }
+        if (contacts && Array.isArray(contacts)) {
+          contacts.forEach(c => {
+            if (c && c.id) {
+              const id = c.id.toLowerCase().trim();
+              if (id.includes('@newsletter') || id.includes('@g.us')) {
+                const name = c.name || c.notify || (id.includes('@newsletter') ? 'WhatsApp Channel' : 'WhatsApp Group');
+                this.chatNameMap[id] = name;
+                count++;
+              }
+            }
+          });
+        }
+        if (count > 0) {
+          this._saveChatNameMap();
+          logger.info(`📡 Synced ${count} active groups/newsletters from history sync (messaging-history.set).`);
         }
       });
 
