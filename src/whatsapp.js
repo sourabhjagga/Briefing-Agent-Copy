@@ -4,7 +4,7 @@
  * Mapped to data/baileys_auth session folder for 100% persistent authentication.
  */
 
-const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = require('@whiskeysockets/baileys');
+const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion } = require('@whiskeysockets/baileys');
 const qrcode = require('qrcode-terminal');
 const pino = require('pino');
 const path = require('path');
@@ -52,10 +52,21 @@ class WhatsAppListener {
     try {
       const { state, saveCreds } = await useMultiFileAuthState(this.authPath);
       
+      // Fetch latest WhatsApp Web version to bypass version rejection (405) errors
+      const { version, isLatest } = await fetchLatestBaileysVersion().catch((err) => {
+        logger.warn(`Could not dynamically fetch WA Web version: ${err.message}. Using stable fallback.`);
+        return { version: [2, 3000, 1015024227], isLatest: false };
+      });
+      logger.info(`📡 WhatsApp client running with version [${version.join('.')}] (Latest: ${isLatest})`);
+
       this.sock = makeWASocket({
+        version,
         auth: state,
         logger: pino({ level: 'silent' }),
-        printQRInTerminal: false // Handled manually below for logs styling
+        printQRInTerminal: false, // Handled manually below for logs styling
+        browser: ['Chrome (Ubuntu)', 'Chrome', '110.0.5481.177'],
+        defaultQueryTimeoutMs: 60000,
+        connectTimeoutMs: 60000
       });
 
       // Listen for credentials updates to save session
@@ -74,11 +85,16 @@ class WhatsAppListener {
 
         if (connection === 'close') {
           this.isReady = false;
-          const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
-          logger.warn(`❌ WhatsApp connection closed. Reason: ${lastDisconnect?.error?.message || 'unknown'}. Reconnecting: ${shouldReconnect}`);
+          const statusCode = lastDisconnect?.error?.output?.statusCode;
+          const errorMessage = lastDisconnect?.error?.message;
+          const errorDetail = lastDisconnect?.error?.output?.payload?.error || lastDisconnect?.error?.output?.payload?.message || '';
+          
+          const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
+          
+          logger.warn(`❌ WhatsApp connection closed. Reason: ${errorMessage || 'unknown'} (${errorDetail}). Code: ${statusCode}. Reconnecting: ${shouldReconnect}`);
           
           if (shouldReconnect) {
-            setTimeout(() => this.start(), 5000);
+            setTimeout(() => this.start(), 10000); // 10 seconds backoff
           } else {
             logger.error('‼️ WhatsApp session logged out. Please clear data/baileys_auth and re-scan.');
           }
