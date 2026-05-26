@@ -21,6 +21,29 @@ WORKDIR /app
 ENV NODE_ENV=production
 ENV PORT=3000
 
+# Install Chromium and system dependencies for Puppeteer
+RUN apt-get update && apt-get install -y \
+    chromium \
+    libnss3 \
+    libnspr4 \
+    libatk-1.0-0 \
+    libatk-bridge2.0-0 \
+    libcups2 \
+    libdrm2 \
+    libxkbcommon0 \
+    libxcomposite1 \
+    libxdamage1 \
+    libxext6 \
+    libxfixes3 \
+    libxrandr2 \
+    libgbm1 \
+    libasound2 \
+    --no-install-recommends \
+    && rm -rf /var/lib/apt/lists/*
+
+ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
+ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
+
 # Create application user and runtime directories for data persistence
 # Debian standard groupadd and useradd used for container security
 RUN groupadd -r agentsg && \

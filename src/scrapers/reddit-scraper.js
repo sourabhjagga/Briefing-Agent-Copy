@@ -1,7 +1,10 @@
 /**
- * Reddit Scraper
- * Pure HTTP scraper utilizing Axios and Cheerio (Puppeteer-free).
- * Implements a robust 3-layer fallback ingestion strategy to bypass cloud IP blocks.
+ * Reddit Scraper (Puppeteer Stealth Headless Upgrade)
+ * 
+ * FAILPROOF THREE-LAYER EXTRACTION:
+ * - Layer 1: Public Reddit JSON API (highly efficient, zero-overhead).
+ * - Layer 2: Headless Puppeteer Stealth (bypasses cloud datacenter IP blocks, supports cookies).
+ * - Layer 3: RSS feed to JSON fallback (immune to basic scraper triggers).
  */
 
 const axios = require('axios');
@@ -9,6 +12,7 @@ const cheerio = require('cheerio');
 const fs = require('fs');
 const path = require('path');
 const logger = require('../logger');
+const browserManager = require('../browser-manager');
 
 class RedditScraper {
   constructor(database, onAlert) {
@@ -16,14 +20,11 @@ class RedditScraper {
     this.onAlert = onAlert;
     this.cookiePath = path.resolve(__dirname, '../../data/reddit_cookies.json');
     this.checkInterval = 15 * 60 * 1000; // 15 minutes
-    
-    this.userAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36';
-    this.cookiesHeader = '';
     this.isSessionAlerted = false;
   }
 
   async start() {
-    logger.info('🚀 Reddit HTTP scraper initialized (scrapes subreddits every 15 min)...');
+    logger.info('🚀 Reddit Scraper stack initialized (scrapes subreddits every 15 min)...');
     try {
       await this.scrape();
       this.intervalId = setInterval(() => this.scrape(), this.checkInterval);
@@ -45,18 +46,17 @@ class RedditScraper {
     if (activeReddit.length === 0) return;
 
     logger.info(`🔍 Starting Reddit scrape session for ${activeReddit.length} subreddits...`);
-    
-    // Load and check imported session cookies if present
-    this._loadCookies();
 
     for (const source of activeReddit) {
       const sub = this._cleanRedditId(source.source_id);
       if (!sub) continue;
 
       let success = await this._scrapeViaJSON(sub, source.type, source.name);
+      
       if (!success) {
         success = await this._scrapeViaCookies(sub, source.type, source.name);
       }
+      
       if (!success) {
         success = await this._scrapeViaRSS(sub, source.type, source.name);
       }
@@ -65,37 +65,9 @@ class RedditScraper {
         logger.error(`❌ All Reddit ingestion layers failed for r/${sub}`);
       }
 
-      // Random delay to avoid hitting Reddit's rate limit
-      const delay = Math.floor(Math.random() * 5000) + 3000;
+      // Random delay between 3 and 7 seconds
+      const delay = Math.floor(Math.random() * 4000) + 3000;
       await new Promise(r => setTimeout(r, delay));
-    }
-  }
-
-  _loadCookies() {
-    // 1. Try loading from database first
-    try {
-      const dbCookies = this.database.getCookies('reddit');
-      if (dbCookies && Array.isArray(dbCookies) && dbCookies.length > 0) {
-        this.cookiesHeader = dbCookies.map(c => `${c.name}=${c.value}`).join('; ');
-        logger.debug('✅ Loaded Reddit cookies from SQLite database.');
-        return;
-      }
-    } catch (err) {
-      logger.debug(`Failed to load Reddit cookies from DB: ${err.message}`);
-    }
-
-    // 2. Fallback to file
-    if (fs.existsSync(this.cookiePath)) {
-      try {
-        const raw = fs.readFileSync(this.cookiePath, 'utf8');
-        const cookiesArray = JSON.parse(raw);
-        this.cookiesHeader = cookiesArray.map(c => `${c.name}=${c.value}`).join('; ');
-        logger.debug('✅ Loaded Reddit cookies from legacy file.');
-      } catch (err) {
-        logger.error(`Failed to load Reddit cookies from file: ${err.message}`);
-      }
-    } else {
-      this.cookiesHeader = '';
     }
   }
 
@@ -105,7 +77,7 @@ class RedditScraper {
     try {
       const res = await axios.get(`https://www.reddit.com/r/${sub}/new.json?limit=15`, {
         headers: {
-          'User-Agent': `Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1 cc-brief-agent-v1`,
+          'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1 cc-brief-agent-v1',
           'Accept': 'application/json'
         },
         timeout: 15000
@@ -124,20 +96,54 @@ class RedditScraper {
     }
   }
 
-  // --- LAYER 2: Reddit Authenticated Cookies Scrape ---
+  // --- LAYER 2: Reddit Authenticated Puppeteer Scrape ---
   async _scrapeViaCookies(sub, sourceType, sourceName) {
-    if (!this.cookiesHeader) {
+    let cookiesArray = this.database.getCookies('reddit');
+    if (!cookiesArray && fs.existsSync(this.cookiePath)) {
+      try {
+        const raw = fs.readFileSync(this.cookiePath, 'utf8');
+        cookiesArray = JSON.parse(raw);
+        this.database.saveCookies('reddit', cookiesArray);
+      } catch (err) {
+        logger.error(`Failed to load Reddit cookies file: ${err.message}`);
+      }
+    }
+
+    if (!cookiesArray || cookiesArray.length === 0) {
       logger.debug('Reddit Layer 2: Skipping, no session cookies active.');
       return false;
     }
 
-    logger.debug(`Reddit Layer 2: Attempting authenticated HTTP scraper for r/${sub}`);
+    logger.debug(`Reddit Layer 2: Attempting authenticated Puppeteer scraper for r/${sub}`);
+    let page = null;
     try {
-      // Use cookies directly — no pre-verification request
-      const dbCookies = this.database.getCookies('reddit');
-      const res = await this._executeGetRequest(`https://www.reddit.com/r/${sub}/new/`, dbCookies);
+      page = await browserManager.newPage();
 
-      const $ = cheerio.load(res.data);
+      // Inject cookies from DB
+      const sanitized = cookiesArray.map(c => ({
+        name: c.name,
+        value: c.value,
+        domain: c.domain.startsWith('.') ? c.domain : `.${c.domain}`,
+        path: c.path || '/'
+      }));
+      await page.setCookie(...sanitized);
+
+      const targetUrl = `https://www.reddit.com/r/${sub}/new/`;
+      await page.goto(targetUrl, { waitUntil: 'domcontentloaded', timeout: 45000 });
+
+      // Stagger and wait for shreddit-posts to settle
+      try {
+        await page.waitForSelector('shreddit-post, article, [data-testid="post-container"]', { timeout: 15000 });
+      } catch (e) {
+        logger.debug(`Timeout waiting for Reddit selectors on r/${sub}.`);
+      }
+
+      // Sync updated cookies back to database
+      const currentCookies = await page.cookies();
+      this._saveUpdatedCookies(currentCookies);
+
+      const html = await page.content();
+      const $ = cheerio.load(html);
       const posts = [];
 
       // Parse Reddit's modern custom shreddit-post elements
@@ -163,13 +169,21 @@ class RedditScraper {
 
       if (posts.length > 0) {
         await this._saveRedditPosts(posts, sub, sourceType, sourceName);
-        logger.info(`✅ Reddit Layer 2: Ingested ${posts.length} posts from r/${sub} via authenticated HTML`);
+        logger.info(`✅ Reddit Layer 2: Ingested ${posts.length} posts from r/${sub} via Puppeteer`);
         return true;
       }
       return false;
     } catch (err) {
       logger.debug(`Reddit Layer 2 failed for r/${sub}: ${err.message}`);
       return false;
+    } finally {
+      if (page) {
+        try {
+          await page.close();
+        } catch (e) {
+          logger.debug(`Error closing page: ${e.message}`);
+        }
+      }
     }
   }
 
@@ -215,11 +229,6 @@ class RedditScraper {
     }
   }
 
-  /**
-   * FAILPROOF cookie merge: Essential auth cookies (reddit_session, token, etc.)
-   * from your imported set are NEVER overwritten by FlareSolverr.
-   * Only Cloudflare bypass tokens (cf_clearance) are updated.
-   */
   _saveUpdatedCookies(newCookies) {
     if (!newCookies || !Array.isArray(newCookies)) return;
     try {
@@ -227,13 +236,10 @@ class RedditScraper {
       const essentialKeys = ['reddit_session', 'token', 'session_tracker', 'loid', 'edgebucket'];
 
       const mergedMap = {};
-      // Original cookies are the base — they have precedence for essential keys
       originalCookies.forEach(c => { mergedMap[c.name] = c; });
 
       newCookies.forEach(c => {
-        // NEVER overwrite essential auth tokens from FlareSolverr responses
-        if (essentialKeys.includes(c.name) && mergedMap[c.name]) {
-          logger.debug(`[FlareSolverr] Preserving original session cookie: ${c.name}`);
+        if (essentialKeys.includes(c.name) && mergedMap[c.name] && !c.value) {
           return;
         }
         mergedMap[c.name] = c;
@@ -241,10 +247,8 @@ class RedditScraper {
 
       const mergedCookies = Object.values(mergedMap);
       this.database.saveCookies('reddit', mergedCookies);
-      this.cookiesHeader = mergedCookies.map(c => `${c.name}=${c.value}`).join('; ');
-      logger.debug('💾 [FlareSolverr] Merged non-essential cookies (preserved auth tokens).');
     } catch (e) {
-      logger.debug(`Failed to save updated cookies from FlareSolverr: ${e.message}`);
+      logger.debug(`Failed to save updated cookies: ${e.message}`);
     }
   }
 
@@ -288,50 +292,6 @@ class RedditScraper {
     }
     return clean.split('/')[0].split('?')[0];
   }
-
-  async _executeGetRequest(url, cookiesArray = null) {
-    const flaresolverrUrl = process.env.FLARESOLVERR_URL;
-    if (flaresolverrUrl) {
-      logger.debug(`[FlareSolverr] Performing GET request for: ${url}`);
-      try {
-        const payload = {
-          cmd: 'request.get',
-          url: url,
-          maxTimeout: 30000,
-        };
-        if (cookiesArray && Array.isArray(cookiesArray) && cookiesArray.length > 0) {
-          payload.cookies = cookiesArray.map(c => ({
-            name: c.name,
-            value: c.value,
-            domain: c.domain || '.reddit.com',
-            path: c.path || '/'
-          }));
-        }
-        const res = await axios.post(flaresolverrUrl, payload, {
-          headers: { 'Content-Type': 'application/json' },
-          timeout: 35000
-        });
-        if (res.data && res.data.status === 'ok' && res.data.solution) {
-          if (res.data.solution.cookies) {
-            this._saveUpdatedCookies(res.data.solution.cookies);
-          }
-          return { data: res.data.solution.response };
-        }
-        throw new Error(res.data ? res.data.message : 'Unknown FlareSolverr error');
-      } catch (err) {
-        logger.error(`[FlareSolverr] Failed request for ${url}: ${err.message}. Falling back to standard Axios...`);
-      }
-    }
-
-    return axios.get(url, {
-      headers: {
-        'User-Agent': this.userAgent,
-        'Cookie': this.cookiesHeader
-      },
-      timeout: 20000
-    });
-  }
-
 }
 
 module.exports = RedditScraper;

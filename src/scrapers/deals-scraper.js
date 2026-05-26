@@ -1,19 +1,18 @@
 /**
- * DesiDime Deals Scraper
- * Pure HTTP scraper utilizing Axios and Cheerio (Puppeteer-free).
+ * DesiDime Deals Scraper (Puppeteer Stealth Headless Upgrade)
  * 
- * FAILPROOF ARCHITECTURE:
- * - No pre-scrape session verification (eliminates false negatives).
- * - Imported cookies are trusted and used directly.
- * - Session health is judged by actual scrape results (deals found).
- * - Alerts only fire after consecutive scrape failures, not verification guesses.
+ * FAILPROOF BROWSER-BASED EXTRACTION:
+ * - Natively handles and bypasses Cloudflare turnstile and shield protections.
+ * - Restores imported login cookies seamlessly inside the browser context.
+ * - Synchronizes active browser cookies back to the SQLite DB to maintain active session health.
+ * - Automatically falls back to GUEST mode if cookies are empty or expired.
  */
 
-const axios = require('axios');
 const cheerio = require('cheerio');
 const fs = require('fs');
 const path = require('path');
 const logger = require('../logger');
+const browserManager = require('../browser-manager');
 
 class DealsScraper {
   constructor(database, onAlert) {
@@ -22,20 +21,13 @@ class DealsScraper {
     this.cookiePath = path.resolve(__dirname, '../../data/desidime_cookies.json');
     this.checkInterval = 15 * 60 * 1000; // 15 minutes
     
-    this.username = process.env.DESIDIME_USERNAME || '';
-    this.password = process.env.DESIDIME_PASSWORD || '';
     this.isSessionAlerted = false;
     this.consecutiveFailures = 0; // Track consecutive zero-deal scrapes
-    
-    this.loginUrl = 'https://www.desidime.com/users/sign_in';
     this.targetUrl = 'https://www.desidime.com/forums/hot-deals-online';
-    
-    this.userAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
-    this.cookiesHeader = '';
   }
 
   async start() {
-    logger.info('🚀 DesiDime deals HTTP scraper initialized (scrapes every 15 min)...');
+    logger.info('🚀 DesiDime deals Puppeteer scraper initialized (scrapes every 15 min)...');
     try {
       await this.scrapeDesiDime();
       this.intervalId = setInterval(() => this.scrapeDesiDime(), this.checkInterval);
@@ -52,16 +44,33 @@ class DealsScraper {
   }
 
   async scrapeDesiDime() {
-    logger.info('🔍 Scraping DesiDime Hot Deals via HTTP...');
+    logger.info('🔍 Scraping DesiDime Hot Deals via Headless Browser...');
+    let page = null;
     try {
-      // Step 1: Load cookies (no verification request — just load and use)
-      this._loadCookies();
+      // 1. Open new tab inside the shared browser instance
+      page = await browserManager.newPage();
 
-      // Step 2: Scrape the actual target page with whatever cookies we have
-      const dbCookies = this.database.getCookies('desidime');
-      const res = await this._executeGetRequest(this.targetUrl, dbCookies);
+      // 2. Set authenticated cookies inside browser session if available
+      await this._injectCookies(page);
 
-      const $ = cheerio.load(res.data);
+      // 3. Navigate to target url
+      logger.debug(`Navigating to DesiDime: ${this.targetUrl}`);
+      await page.goto(this.targetUrl, { waitUntil: 'domcontentloaded', timeout: 45000 });
+
+      // 4. Stagger and wait for content/selectors to settle
+      try {
+        await page.waitForSelector('li.post-unit, a[href*="/deals/"]', { timeout: 15000 });
+      } catch (e) {
+        logger.debug(`Timeout waiting for primary selector. Processing current DOM structure...`);
+      }
+
+      // 5. Sync cookies from browser back to database to maintain Cloudflare and session tokens
+      const currentCookies = await page.cookies();
+      this._saveUpdatedCookies(currentCookies);
+
+      // 6. Extract page HTML and parse via Cheerio
+      const html = await page.content();
+      const $ = cheerio.load(html);
       const deals = [];
 
       // Parse actual DesiDime DOM elements (li.post-unit)
@@ -114,7 +123,7 @@ class DealsScraper {
 
       logger.info(`✅ Successfully parsed ${deals.length} deals from DesiDime.`);
 
-      // Step 3: Judge session health by actual results
+      // 7. Judge session health by actual results
       if (deals.length > 0) {
         this.consecutiveFailures = 0;
         this.isSessionAlerted = false;
@@ -122,7 +131,7 @@ class DealsScraper {
         this.consecutiveFailures++;
         logger.warn(`⚠️  DesiDime returned 0 deals (consecutive failures: ${this.consecutiveFailures}).`);
         
-        // Only alert after 3 consecutive zero-result scrapes (45 minutes of failures)
+        // Alert after 3 consecutive failures
         if (this.consecutiveFailures >= 3 && !this.isSessionAlerted && this.onAlert) {
           this.onAlert(
             '⚠️ <b>DesiDime Scraper Issue</b>\n\nDesiDime has returned 0 deals for 3 consecutive scrapes. Your session cookies may have expired. Please login to DesiDime in your browser, export fresh cookies via EditThisCookie, and paste them into the Web Dashboard.'
@@ -146,7 +155,7 @@ class DealsScraper {
           body: `🔥 <b>Deal:</b> ${deal.title}\n` +
                 (deal.price ? `💰 <b>Price/Discount:</b> ${deal.price}\n` : '') +
                 (deal.description ? `📝 <b>Details:</b> ${deal.description}\n` : '') +
-                `🔗 <b>Link:</b> ${deal.link}`,
+                `🔗 <a href="${deal.link}">View Deal</a>`,
           timestamp: Math.floor(Date.now() / 1000),
           hasMedia: false,
           mediaCaption: '',
@@ -159,123 +168,54 @@ class DealsScraper {
       logger.info(`💾 Saved/Updated ${savedCount} deals in database.`);
     } catch (err) {
       logger.error(`Error during DesiDime scrape: ${err.message}`);
+    } finally {
+      if (page) {
+        try {
+          await page.close();
+        } catch (e) {
+          logger.debug(`Error closing page: ${e.message}`);
+        }
+      }
     }
   }
 
-  /**
-   * FAILPROOF: Simply load cookies from DB or file. No verification request.
-   * The actual scrape will tell us if they work.
-   */
-  _loadCookies() {
-    // 1. Try loading from SQLite database first
-    try {
-      const dbCookies = this.database.getCookies('desidime');
-      if (dbCookies && Array.isArray(dbCookies) && dbCookies.length > 0) {
-        this.cookiesHeader = this._formatCookieHeader(dbCookies);
-        logger.debug('✅ Loaded DesiDime cookies from SQLite database.');
-        return;
-      }
-    } catch (err) {
-      logger.debug(`Failed to load DesiDime cookies from DB: ${err.message}`);
-    }
-
-    // 2. Fallback to file
-    if (fs.existsSync(this.cookiePath)) {
+  async _injectCookies(page) {
+    let cookiesArray = this.database.getCookies('desidime');
+    if (!cookiesArray && fs.existsSync(this.cookiePath)) {
       try {
         const raw = fs.readFileSync(this.cookiePath, 'utf8');
-        const cookiesArray = JSON.parse(raw);
-        this.cookiesHeader = this._formatCookieHeader(cookiesArray);
-        // Seed into DB for persistence
+        cookiesArray = JSON.parse(raw);
         this.database.saveCookies('desidime', cookiesArray);
-        logger.debug('✅ Loaded DesiDime cookies from legacy file and seeded into DB.');
-        return;
       } catch (err) {
-        logger.error(`Failed to load DesiDime cookies from file: ${err.message}`);
+        logger.error(`Failed to load cookies file: ${err.message}`);
       }
     }
 
-    // 3. No cookies available — will scrape as guest
-    this.cookiesHeader = '';
-    logger.debug('ℹ️  No DesiDime cookies available. Scraping as guest.');
-  }
-
-  _parseSetCookies(setCookieHeader) {
-    if (!setCookieHeader) return [];
-    return setCookieHeader.map(str => {
-      const parts = str.split(';')[0].split('=');
-      return {
-        name: parts[0].trim(),
-        value: parts.slice(1).join('=').trim()
-      };
-    });
-  }
-
-  _formatCookieHeader(cookiesArray) {
-    return cookiesArray.map(c => `${c.name}=${c.value}`).join('; ');
-  }
-
-  async _executeGetRequest(url, cookiesArray = null) {
-    const flaresolverrUrl = process.env.FLARESOLVERR_URL;
-    if (flaresolverrUrl) {
-      logger.debug(`[FlareSolverr] Performing GET request for: ${url}`);
-      try {
-        const payload = {
-          cmd: 'request.get',
-          url: url,
-          maxTimeout: 30000,
-        };
-        if (cookiesArray && Array.isArray(cookiesArray) && cookiesArray.length > 0) {
-          payload.cookies = cookiesArray.map(c => ({
-            name: c.name,
-            value: c.value,
-            domain: c.domain || '.desidime.com',
-            path: c.path || '/'
-          }));
-        }
-        const res = await axios.post(flaresolverrUrl, payload, {
-          headers: { 'Content-Type': 'application/json' },
-          timeout: 35000
-        });
-        if (res.data && res.data.status === 'ok' && res.data.solution) {
-          if (res.data.solution.cookies) {
-            this._saveUpdatedCookies(res.data.solution.cookies, cookiesArray);
-          }
-          return { data: res.data.solution.response };
-        }
-        throw new Error(res.data ? res.data.message : 'Unknown FlareSolverr error');
-      } catch (err) {
-        logger.error(`[FlareSolverr] Failed request for ${url}: ${err.message}. Falling back to standard Axios...`);
-      }
+    if (cookiesArray && Array.isArray(cookiesArray) && cookiesArray.length > 0) {
+      logger.debug(`Injecting ${cookiesArray.length} cookies into browser tab for DesiDime...`);
+      // Standardize cookies array format for Puppeteer
+      const sanitized = cookiesArray.map(c => ({
+        name: c.name,
+        value: c.value,
+        domain: c.domain.startsWith('.') ? c.domain : `.${c.domain}`,
+        path: c.path || '/'
+      }));
+      await page.setCookie(...sanitized);
     }
-
-    return axios.get(url, {
-      headers: {
-        'User-Agent': this.userAgent,
-        'Cookie': this.cookiesHeader
-      },
-      timeout: 20000
-    });
   }
 
-  /**
-   * FAILPROOF cookie merge: Preserves original auth tokens. Only updates
-   * non-essential cookies (cf_clearance, __cfduid, etc.) from FlareSolverr.
-   * Essential cookies are NEVER overwritten by FlareSolverr responses.
-   */
-  _saveUpdatedCookies(newCookies, originalCookiesFromDB) {
+  _saveUpdatedCookies(newCookies) {
     if (!newCookies || !Array.isArray(newCookies)) return;
     try {
-      const originalCookies = originalCookiesFromDB || this.database.getCookies('desidime') || [];
+      const originalCookies = this.database.getCookies('desidime') || [];
       const essentialKeys = ['dd_auth_token', 'at', '_session_id', '_desidime_session', 'remember_user_token'];
 
       const mergedMap = {};
-      // Original cookies are the base — they have precedence for essential keys
       originalCookies.forEach(c => { mergedMap[c.name] = c; });
 
       newCookies.forEach(c => {
-        // NEVER overwrite essential auth tokens from FlareSolverr guest responses
-        if (essentialKeys.includes(c.name) && mergedMap[c.name]) {
-          logger.debug(`[FlareSolverr] Preserving original session cookie: ${c.name}`);
+        // Essential cookies from manual import are preserved unless updated with authentic values
+        if (essentialKeys.includes(c.name) && mergedMap[c.name] && !c.value) {
           return;
         }
         mergedMap[c.name] = c;
@@ -283,10 +223,8 @@ class DealsScraper {
 
       const mergedCookies = Object.values(mergedMap);
       this.database.saveCookies('desidime', mergedCookies);
-      this.cookiesHeader = this._formatCookieHeader(mergedCookies);
-      logger.debug('💾 [FlareSolverr] Merged non-essential cookies (preserved auth tokens).');
     } catch (e) {
-      logger.debug(`Failed to save updated cookies from FlareSolverr: ${e.message}`);
+      logger.debug(`Failed to save updated cookies: ${e.message}`);
     }
   }
 }

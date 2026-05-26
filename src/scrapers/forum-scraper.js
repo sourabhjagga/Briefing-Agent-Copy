@@ -1,19 +1,18 @@
 /**
- * Technofino Forum Scraper
- * Pure HTTP scraper utilizing Axios and Cheerio (Puppeteer-free).
+ * Technofino Forum Scraper (Puppeteer Stealth Headless Upgrade)
  * 
- * FAILPROOF ARCHITECTURE:
- * - No pre-scrape session verification (eliminates false negatives).
- * - Imported cookies are trusted and used directly.
- * - Session health is judged by VIP Lounge thread count (0 = likely guest).
- * - Alerts only fire after consecutive VIP Lounge failures.
+ * FAILPROOF BROWSER-BASED EXTRACTION:
+ * - Solves XenForo Cloudflare challenges natively in the background.
+ * - Restores imported login cookies seamlessly inside the browser context.
+ * - Synchronizes active browser cookies back to the SQLite DB to maintain active session health.
+ * - Judges session health by VIP Lounge thread count (0 threads = session expired).
  */
 
-const axios = require('axios');
 const cheerio = require('cheerio');
 const fs = require('fs');
 const path = require('path');
 const logger = require('../logger');
+const browserManager = require('../browser-manager');
 
 class ForumScraper {
   constructor(database, onAlert) {
@@ -22,8 +21,6 @@ class ForumScraper {
     this.cookiePath = path.resolve(__dirname, '../../data/technofino_cookies.json');
     this.checkInterval = 45 * 60 * 1000; // 45 minutes
     
-    this.username = process.env.TECHNOFINO_USERNAME || '';
-    this.password = process.env.TECHNOFINO_PASSWORD || '';
     this.isSessionAlerted = false;
     this.consecutiveVipFailures = 0; // Track consecutive VIP Lounge 0-thread scrapes
     
@@ -44,100 +41,74 @@ class ForumScraper {
         isPrivate: false,
       },
     ];
-
-    this.userAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
-    this.cookiesHeader = '';
   }
 
   async start() {
-    logger.info('🌐 Technofino forum HTTP scraper initialized (scrapes every 45 min)...');
+    logger.info('🌐 Technofino forum Puppeteer scraper initialized (scrapes every 45 min)...');
     try {
       await this.scrape();
-      setInterval(() => this.scrape(), this.checkInterval);
+      this.intervalId = setInterval(() => this.scrape(), this.checkInterval);
     } catch (err) {
       logger.error(`Forum scraper startup failed: ${err.message}`);
     }
   }
 
   stop() {
-    // No interval ID stored, but keeping for interface compatibility
+    if (this.intervalId) {
+      clearInterval(this.intervalId);
+      this.intervalId = null;
+    }
   }
 
   async scrape() {
-    logger.info('🔄 Starting Technofino HTTP scrape session...');
+    logger.info('🔄 Starting Technofino HTTP scrape session via Headless Browser...');
+    let page = null;
     try {
-      // Step 1: Load cookies directly (no verification request)
-      this._loadCookies();
+      // 1. Open new tab inside the shared browser instance
+      page = await browserManager.newPage();
+
+      // 2. Set authenticated cookies inside browser session if available
+      await this._injectCookies(page);
 
       for (const target of this.targets) {
-        await this._scrapeTarget(target);
+        await this._scrapeTarget(page, target);
         // Stagger requests between 3 and 7 seconds
         const delay = Math.floor(Math.random() * 4000) + 3000;
         await new Promise(r => setTimeout(r, delay));
       }
+
+      // 3. Sync cookies from browser back to database to maintain Cloudflare and session tokens
+      const currentCookies = await page.cookies();
+      this._saveUpdatedCookies(currentCookies);
+
     } catch (err) {
       logger.error(`Technofino scrape run failed: ${err.message}`);
-    }
-  }
-
-  /**
-   * FAILPROOF: Simply load cookies from DB or file. No verification request.
-   * The actual VIP Lounge scrape will tell us if they work.
-   */
-  _loadCookies() {
-    // 1. Try loading from SQLite database first
-    try {
-      const dbCookies = this.database.getCookies('technofino');
-      if (dbCookies && Array.isArray(dbCookies) && dbCookies.length > 0) {
-        this.cookiesHeader = this._formatCookieHeader(dbCookies);
-        logger.info('🔐 Technofino cookies loaded from database (trusted, no verification request).');
-        return;
-      }
-    } catch (err) {
-      logger.debug(`Failed to load Technofino cookies from DB: ${err.message}`);
-    }
-
-    // 2. Fallback to file
-    if (fs.existsSync(this.cookiePath)) {
-      try {
-        const raw = fs.readFileSync(this.cookiePath, 'utf8');
-        const cookiesArray = JSON.parse(raw);
-        this.cookiesHeader = this._formatCookieHeader(cookiesArray);
-        // Seed into DB for persistence
-        this.database.saveCookies('technofino', cookiesArray);
-        logger.info('🔐 Technofino cookies loaded from legacy file and seeded into DB.');
-        return;
-      } catch (err) {
-        logger.error(`Failed to load Technofino cookies from file: ${err.message}`);
-      }
-    }
-
-    // 3. Try autologin via credentials as a last resort
-    // (We do this synchronously-ish here so that the first scrape can benefit)
-    this.cookiesHeader = '';
-    logger.warn('⚠️  No Technofino cookies found. Will attempt credential login if available.');
-  }
-
-  async _scrapeTarget(target) {
-    logger.debug(`Scraping Technofino target: "${target.name}"`);
-    try {
-      // If no cookies at all and credentials exist, try login once before first target
-      if (!this.cookiesHeader && this.username && this.password) {
-        logger.info('🔑 Attempting Technofino credential login...');
+    } finally {
+      if (page) {
         try {
-          const loginSucceeded = await this._performLogin();
-          if (loginSucceeded) {
-            logger.info('✅ Automated Technofino login successful!');
-          }
-        } catch (loginErr) {
-          logger.error(`Automated Technofino login failed: ${loginErr.message}`);
+          await page.close();
+        } catch (e) {
+          logger.debug(`Error closing page: ${e.message}`);
         }
       }
+    }
+  }
 
-      const dbCookies = this.database.getCookies('technofino');
-      const res = await this._executeGetRequest(target.url, dbCookies);
+  async _scrapeTarget(page, target) {
+    logger.debug(`Scraping Technofino target: "${target.name}"`);
+    try {
+      // Navigate browser to target URL
+      await page.goto(target.url, { waitUntil: 'domcontentloaded', timeout: 45000 });
 
-      const $ = cheerio.load(res.data);
+      // Stagger and wait for tables to load
+      try {
+        await page.waitForSelector('.structItem--thread, .structItem--post', { timeout: 15000 });
+      } catch (e) {
+        logger.debug(`Timeout waiting for structItem selector on "${target.name}". Processing raw DOM...`);
+      }
+
+      const html = await page.content();
+      const $ = cheerio.load(html);
       const items = [];
 
       $('.structItem--thread, .structItem--post').each((i, el) => {
@@ -167,7 +138,7 @@ class ForumScraper {
 
       logger.info(`✅ Found ${items.length} threads in Technofino: "${target.name}"`);
 
-      // Step 3: Judge session health by VIP Lounge results (the canary)
+      // Judge session health by VIP Lounge results
       if (target.isPrivate) {
         if (items.length > 0) {
           this.consecutiveVipFailures = 0;
@@ -177,7 +148,7 @@ class ForumScraper {
           this.consecutiveVipFailures++;
           logger.warn(`⚠️  VIP Lounge returned 0 threads (consecutive failures: ${this.consecutiveVipFailures}).`);
           
-          // Only alert after 2 consecutive VIP failures (90 min of failures)
+          // Alert after 2 consecutive failures (90 min)
           if (this.consecutiveVipFailures >= 2 && !this.isSessionAlerted && this.onAlert) {
             this.onAlert(
               '⚠️ <b>Technofino VIP Lounge Access Lost</b>\n\nThe VIP Credit Card Lounge has returned 0 threads for 2 consecutive scrapes, indicating your session has expired. Please login to Technofino in your browser, export fresh cookies via EditThisCookie, and paste them into the Web Dashboard.'
@@ -209,145 +180,42 @@ class ForumScraper {
     }
   }
 
-  async _performLogin() {
-    // A. Get login page to extract CSRF xfToken
-    const getRes = await axios.get('https://technofino.in/community/login/', {
-      headers: { 'User-Agent': this.userAgent },
-      timeout: 15000
-    });
-
-    const $ = cheerio.load(getRes.data);
-    const xfToken = $('input[name="_xfToken"]').val();
-    
-    if (!xfToken) {
-      throw new Error('Could not retrieve XenForo CSRF _xfToken from login page.');
-    }
-
-    // Extract initial session cookie from headers
-    const initialCookies = this._parseSetCookies(getRes.headers['set-cookie']);
-
-    // B. Post credentials to XenForo login endpoint
-    const params = new URLSearchParams();
-    params.append('login', this.username);
-    params.append('password', this.password);
-    params.append('_xfToken', xfToken);
-    params.append('remember', '1');
-    params.append('_xfRedirect', 'https://technofino.in/community/');
-
-    const postRes = await axios.post('https://technofino.in/community/login/login', params, {
-      headers: {
-        'User-Agent': this.userAgent,
-        'Cookie': this._formatCookieHeader(initialCookies),
-        'Content-Type': 'application/x-www-form-urlencoded'
-      },
-      maxRedirects: 0, // XenForo redirects on login success
-      validateStatus: (status) => status >= 200 && status < 400 // Accept 303 Redirect as success
-    });
-
-    // Check post login headers for new session and user cookies
-    const loginCookies = this._parseSetCookies(postRes.headers['set-cookie']);
-    const combinedCookies = [...initialCookies, ...loginCookies];
-
-    // Remove duplicates keeping the latest cookie values
-    const finalCookiesMap = {};
-    combinedCookies.forEach(c => {
-      finalCookiesMap[c.name] = c;
-    });
-    const finalCookiesArray = Object.values(finalCookiesMap);
-
-    this.cookiesHeader = this._formatCookieHeader(finalCookiesArray);
-
-    // Save cookies to SQLite database for 100% persistence
-    this.database.saveCookies('technofino', finalCookiesArray);
-
-    // Save cookies to disk as fallback
-    try {
-      const dir = path.dirname(this.cookiePath);
-      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-      fs.writeFileSync(this.cookiePath, JSON.stringify(finalCookiesArray, null, 2), 'utf8');
-    } catch (fileErr) {
-      logger.debug(`Could not write Technofino cookies to file: ${fileErr.message}`);
-    }
-    return true;
-  }
-
-  _parseSetCookies(setCookieHeader) {
-    if (!setCookieHeader) return [];
-    return setCookieHeader.map(str => {
-      const parts = str.split(';')[0].split('=');
-      return {
-        name: parts[0].trim(),
-        value: parts.slice(1).join('=').trim()
-      };
-    });
-  }
-
-  _formatCookieHeader(cookiesArray) {
-    return cookiesArray.map(c => `${c.name}=${c.value}`).join('; ');
-  }
-
-  async _executeGetRequest(url, cookiesArray = null) {
-    const flaresolverrUrl = process.env.FLARESOLVERR_URL;
-    if (flaresolverrUrl) {
-      logger.debug(`[FlareSolverr] Performing GET request for: ${url}`);
+  async _injectCookies(page) {
+    let cookiesArray = this.database.getCookies('technofino');
+    if (!cookiesArray && fs.existsSync(this.cookiePath)) {
       try {
-        const payload = {
-          cmd: 'request.get',
-          url: url,
-          maxTimeout: 30000,
-        };
-        if (cookiesArray && Array.isArray(cookiesArray) && cookiesArray.length > 0) {
-          payload.cookies = cookiesArray.map(c => ({
-            name: c.name,
-            value: c.value,
-            domain: c.domain || '.technofino.in',
-            path: c.path || '/'
-          }));
-        }
-        const res = await axios.post(flaresolverrUrl, payload, {
-          headers: { 'Content-Type': 'application/json' },
-          timeout: 35000
-        });
-        if (res.data && res.data.status === 'ok' && res.data.solution) {
-          if (res.data.solution.cookies) {
-            this._saveUpdatedCookies(res.data.solution.cookies, cookiesArray);
-          }
-          return { data: res.data.solution.response };
-        }
-        throw new Error(res.data ? res.data.message : 'Unknown FlareSolverr error');
+        const raw = fs.readFileSync(this.cookiePath, 'utf8');
+        cookiesArray = JSON.parse(raw);
+        this.database.saveCookies('technofino', cookiesArray);
       } catch (err) {
-        logger.error(`[FlareSolverr] Failed request for ${url}: ${err.message}. Falling back to standard Axios...`);
+        logger.error(`Failed to load cookies file: ${err.message}`);
       }
     }
 
-    return axios.get(url, {
-      headers: {
-        'User-Agent': this.userAgent,
-        'Cookie': this.cookiesHeader
-      },
-      timeout: 20000
-    });
+    if (cookiesArray && Array.isArray(cookiesArray) && cookiesArray.length > 0) {
+      logger.debug(`Injecting ${cookiesArray.length} cookies into browser tab for Technofino...`);
+      const sanitized = cookiesArray.map(c => ({
+        name: c.name,
+        value: c.value,
+        domain: c.domain.startsWith('.') ? c.domain : `.${c.domain}`,
+        path: c.path || '/'
+      }));
+      await page.setCookie(...sanitized);
+    }
   }
 
-  /**
-   * FAILPROOF cookie merge: Essential auth cookies (xf_user, xf_session)
-   * from your imported set are NEVER overwritten by FlareSolverr.
-   * Only Cloudflare bypass tokens (cf_clearance) are updated.
-   */
-  _saveUpdatedCookies(newCookies, originalCookiesFromDB) {
+  _saveUpdatedCookies(newCookies) {
     if (!newCookies || !Array.isArray(newCookies)) return;
     try {
-      const originalCookies = originalCookiesFromDB || this.database.getCookies('technofino') || [];
+      const originalCookies = this.database.getCookies('technofino') || [];
       const essentialKeys = ['xf_user', 'xf_session', 'xf_csrf', 'xf_notice_dismiss'];
 
       const mergedMap = {};
-      // Original cookies are the base — they have precedence for essential keys
       originalCookies.forEach(c => { mergedMap[c.name] = c; });
 
       newCookies.forEach(c => {
-        // NEVER overwrite essential auth tokens from FlareSolverr responses
-        if (essentialKeys.includes(c.name) && mergedMap[c.name]) {
-          logger.debug(`[FlareSolverr] Preserving original session cookie: ${c.name}`);
+        // Essential session cookies from manual import are preserved unless updated with authentic values
+        if (essentialKeys.includes(c.name) && mergedMap[c.name] && !c.value) {
           return;
         }
         mergedMap[c.name] = c;
@@ -355,10 +223,8 @@ class ForumScraper {
 
       const mergedCookies = Object.values(mergedMap);
       this.database.saveCookies('technofino', mergedCookies);
-      this.cookiesHeader = this._formatCookieHeader(mergedCookies);
-      logger.debug('💾 [FlareSolverr] Merged non-essential cookies (preserved auth tokens).');
     } catch (e) {
-      logger.debug(`Failed to save updated cookies from FlareSolverr: ${e.message}`);
+      logger.debug(`Failed to save updated cookies: ${e.message}`);
     }
   }
 }
