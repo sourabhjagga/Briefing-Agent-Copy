@@ -2,10 +2,20 @@
  * YouTube Scraper
  * Pure HTTP scraper (Puppeteer-free).
  * Monitors channel RSS feeds, downloads captions directly, and summarizes via the central Summarizer.
+ * 
+ * FAILPROOF NATIVE GEMINI AUDIO FALLBACK:
+ * - If standard auto-captions/transcripts are disabled or missing,
+ *   downloads the raw audio stream in low-quality format using @distube/ytdl-core.
+ * - Sends the audio buffer directly to Gemini 3.1 Flash Lite for ultra-accurate speech-to-text.
+ * - Automatically cleans up temporary files immediately to preserve zero disk footprint.
  */
 
 const axios = require('axios');
 const { YoutubeTranscript } = require('youtube-transcript');
+const ytdl = require('@distube/ytdl-core');
+const { GoogleGenerativeAI } = require('@google/generative-ai');
+const fs = require('fs');
+const path = require('path');
 const logger = require('../logger');
 
 class YoutubeScraper {
@@ -15,6 +25,10 @@ class YoutubeScraper {
     this.checkInterval = 60 * 60 * 1000; // Hourly check
     this.intervalId = null;
     this.userAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+    
+    // Initialize standard Gemini client for audio transcription using process.env.GEMINI_API_KEY
+    this.geminiKey = process.env.GEMINI_API_KEY || '';
+    this.genAI = this.geminiKey ? new GoogleGenerativeAI(this.geminiKey) : null;
   }
 
   start() {
@@ -86,18 +100,37 @@ class YoutubeScraper {
 
         logger.info(`🎥 Processing new video: "${video.title}" (ID: ${video.id}) from "${source.name}"`);
         
+        let transcript = '';
         let summary = '';
+
+        // Step 1: Try fetching standard subtitles/transcript
         try {
-          const transcript = await this.fetchTranscript(video.id);
-          if (transcript && transcript.length > 100) {
+          transcript = await this.fetchTranscript(video.id);
+        } catch (err) {
+          logger.warn(`Subtitles disabled or unavailable for video ${video.id}.`);
+        }
+
+        // Step 2: Gemini Audio Fallback if standard subtitles failed or returned empty
+        if (!transcript || transcript.length < 100) {
+          logger.info(`🎙️ Triggering Gemini Audio Fallback for video ${video.id}...`);
+          try {
+            transcript = await this.transcribeAudioWithGemini(video.id);
+          } catch (audioErr) {
+            logger.error(`❌ Gemini Audio Fallback failed for video ${video.id}: ${audioErr.message}`);
+          }
+        }
+
+        // Step 3: Summarize via unified pipeline
+        try {
+          if (transcript && transcript.length > 50) {
             summary = await this.summarizer.summarizeYoutubeVideo(video.title, transcript, source.type);
           } else {
-            logger.warn(`⚠️ Transcript for video ${video.id} too short/empty. Summarizing using title only.`);
+            logger.warn(`⚠️ Transcript empty. Summarizing using title only.`);
             summary = await this.summarizer.summarizeYoutubeVideo(video.title, '[No transcript available]', source.type);
           }
-        } catch (err) {
-          logger.error(`Error fetching/summarizing transcript for video ${video.id}: ${err.message}`);
-          summary = `(Transcript unavailable due to error: ${err.message})\nThis video covers: "${video.title}"`;
+        } catch (sumErr) {
+          logger.error(`Error summarizing video ${video.id}: ${sumErr.message}`);
+          summary = `(Transcript unavailable)\nThis video covers: "${video.title}"`;
         }
 
         this.database.saveMessage({
@@ -119,6 +152,66 @@ class YoutubeScraper {
       }
     } catch (err) {
       logger.error(`Error scraping channel ${source.name}: ${err.message}`);
+    }
+  }
+
+  /**
+   * FAILSFEAF AUDIO TRANSCRIPTION:
+   * - Downloads lowest-bitrate mono audio directly to a buffer.
+   * - Instructs Gemini 3.1 Flash Lite to perform ultra-accurate speech-to-text.
+   */
+  async transcribeAudioWithGemini(videoId) {
+    if (!this.genAI) {
+      throw new Error('Gemini API key is not configured.');
+    }
+
+    const tempDir = path.resolve(__dirname, '../../data/temp');
+    if (!fs.existsSync(tempDir)) {
+      fs.mkdirSync(tempDir, { recursive: true });
+    }
+    const outputPath = path.join(tempDir, `${videoId}.mp3`);
+
+    try {
+      logger.info(`📥 Downloading raw low-quality audio for video ${videoId}...`);
+      await new Promise((resolve, reject) => {
+        ytdl(`https://www.youtube.com/watch?v=${videoId}`, {
+          filter: 'audioonly',
+          quality: 'lowestaudio' // Tiny file size to avoid high latency or token limits
+        })
+        .pipe(fs.createWriteStream(outputPath))
+        .on('finish', () => resolve())
+        .on('error', (err) => reject(err));
+      });
+
+      const audioBytes = fs.readFileSync(outputPath);
+      logger.info(`🎙️ Uploading audio payload (~${Math.round(audioBytes.length / 1024)} KB) directly to Gemini 3.1 Flash Lite...`);
+
+      // Construct native inline multimodal part
+      const audioPart = {
+        inlineData: {
+          data: audioBytes.toString('base64'),
+          mimeType: 'audio/mp3'
+        }
+      };
+
+      const model = this.genAI.getGenerativeModel({ model: 'gemini-3.1-flash-lite' });
+      const prompt = 'Transcribe this audio accurately. Write it in the original language (Hindi/English). Provide a clean, readable text output.';
+
+      const result = await model.generateContent([prompt, audioPart]);
+      const transcript = result.response.text();
+      
+      logger.info(`✅ Gemini Audio transcription completed (~${transcript.length} chars generated)`);
+      return transcript;
+    } finally {
+      // Always cleanup temporary audio file to maintain zero host footprint
+      if (fs.existsSync(outputPath)) {
+        try {
+          fs.unlinkSync(outputPath);
+          logger.debug(`🧹 Cleaned up temporary audio file: ${outputPath}`);
+        } catch (e) {
+          logger.debug(`Could not clean up temporary file ${outputPath}: ${e.message}`);
+        }
+      }
     }
   }
 
@@ -185,37 +278,21 @@ class YoutubeScraper {
 
   async fetchTranscript(videoId) {
     logger.debug(`Fetching transcript directly via youtube-transcript API for: ${videoId}`);
-    try {
-      // 1. Try fetching Hindi transcript first
-      let tracks;
-      try {
-        tracks = await YoutubeTranscript.fetchTranscript(videoId, { lang: 'hi' });
-      } catch (err) {
-        logger.debug(`No direct Hindi transcript found for ${videoId}, trying English fallback...`);
-        // 2. Try fetching English transcript
-        try {
-          tracks = await YoutubeTranscript.fetchTranscript(videoId, { lang: 'en' });
-        } catch (enErr) {
-          logger.debug(`No direct English transcript found for ${videoId}, trying default track...`);
-          // 3. Fallback to default track
-          tracks = await YoutubeTranscript.fetchTranscript(videoId);
-        }
-      }
+    // Explicitly throw standard exceptions so the outer block cascades to Gemini fallback
+    const tracks = await YoutubeTranscript.fetchTranscript(videoId, { lang: 'hi' })
+      .catch(() => YoutubeTranscript.fetchTranscript(videoId, { lang: 'en' }))
+      .catch(() => YoutubeTranscript.fetchTranscript(videoId));
 
-      if (!tracks || tracks.length === 0) return '';
-      
-      return tracks.map(t => t.text)
-        .join(' ')
-        .replace(/&amp;/g, '&')
-        .replace(/&lt;/g, '<')
-        .replace(/&gt;/g, '>')
-        .replace(/&quot;/g, '"')
-        .replace(/&#39;/g, "'")
-        .trim();
-    } catch (err) {
-      logger.warn(`Failed to fetch YouTube transcript: ${err.message}`);
-      return '';
-    }
+    if (!tracks || tracks.length === 0) return '';
+    
+    return tracks.map(t => t.text)
+      .join(' ')
+      .replace(/&amp;/g, '&')
+      .replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>')
+      .replace(/&quot;/g, '"')
+      .replace(/&#39;/g, "'")
+      .trim();
   }
 }
 
