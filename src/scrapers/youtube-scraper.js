@@ -2,17 +2,18 @@
  * YouTube Scraper
  * Pure HTTP scraper (Puppeteer-free).
  * Monitors channel RSS feeds, downloads captions directly, and summarizes via the central Summarizer.
- * 
- * FAILPROOF NATIVE GEMINI AUDIO FALLBACK:
- * - If standard auto-captions/transcripts are disabled or missing,
- *   downloads the raw audio stream in low-quality format using @distube/ytdl-core.
- * - Sends the audio buffer directly to Gemini 3.1 Flash Lite for ultra-accurate speech-to-text.
- * - Automatically cleans up temporary files immediately to preserve zero disk footprint.
+ *
+ * FAILPROOF THREE-LAYER TRANSCRIPT PIPELINE:
+ * - Layer 1: Standard YouTube auto-captions/subtitles via youtube-transcript.
+ * - Layer 2: yt-dlp binary audio download + Gemini 3.1 Flash Lite speech-to-text.
+ *            yt-dlp natively bypasses YouTube bot detection — no cookies or browser required.
+ * - Layer 3: Google Search Grounding via Gemini 2.5 Flash (reconstructs video content from web).
+ * - Automatically cleans up temporary audio files to maintain zero disk footprint.
  */
 
 const axios = require('axios');
 const { YoutubeTranscript } = require('youtube-transcript');
-const ytdl = require('@distube/ytdl-core');
+const { spawn } = require('child_process');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const fs = require('fs');
 const path = require('path');
@@ -156,9 +157,12 @@ class YoutubeScraper {
   }
 
   /**
-   * FAILSFEAF AUDIO TRANSCRIPTION:
-   * - Downloads lowest-bitrate mono audio directly to a buffer.
-   * - Instructs Gemini 3.1 Flash Lite to perform ultra-accurate speech-to-text.
+   * LAYER 2: yt-dlp Audio Download + Gemini Speech-to-Text
+   * - Uses the system yt-dlp binary (installed in Dockerfile) to download the lowest-quality audio.
+   * - yt-dlp natively handles YouTube bot detection without needing cookies or a browser.
+   * - Optionally uses a cookies.txt file if present for age-restricted or private videos.
+   * - Sends the downloaded audio buffer inline to Gemini 3.1 Flash Lite for transcription.
+   * - Falls back to Google Search Grounding (Layer 3) if yt-dlp itself fails.
    */
   async transcribeAudioWithGemini(videoId) {
     if (!this.genAI) {
@@ -169,112 +173,104 @@ class YoutubeScraper {
     if (!fs.existsSync(tempDir)) {
       fs.mkdirSync(tempDir, { recursive: true });
     }
-    const outputPath = path.join(tempDir, `${videoId}.mp3`);
-
-    let ytdlAgent = null;
-    const cookiePath = path.resolve(__dirname, '../../data/youtube_cookies.txt');
-    if (fs.existsSync(cookiePath)) {
-      try {
-        const raw = fs.readFileSync(cookiePath, 'utf8');
-        const lines = raw.split('\n');
-        const cookieArray = [];
-        for (const line of lines) {
-          if (!line || line.startsWith('#')) continue;
-          const parts = line.split('\t');
-          if (parts.length >= 7) {
-            cookieArray.push({
-              domain: parts[0].trim(),
-              path: parts[2].trim(),
-              secure: parts[3].trim().toUpperCase() === 'TRUE',
-              name: parts[5].trim(),
-              value: parts[6].trim()
-            });
-          }
-        }
-        if (cookieArray.length > 0) {
-          ytdlAgent = ytdl.createAgent(cookieArray);
-          logger.info(`🍪 Parsed ${cookieArray.length} authenticated cookies and created ytdl agent.`);
-        }
-      } catch (err) {
-        logger.error(`Failed to parse youtube_cookies.txt: ${err.message}`);
-      }
-    }
+    const outputPath = path.join(tempDir, `${videoId}.m4a`);
 
     try {
-      logger.info(`📥 Downloading raw low-quality audio for video ${videoId} with authenticated ytdl agent...`);
+      logger.info(`📥 [yt-dlp] Downloading lowest-quality audio for video ${videoId}...`);
+
+      // Build yt-dlp arguments
+      const ytdlpArgs = [
+        `https://www.youtube.com/watch?v=${videoId}`,
+        '--format', 'bestaudio[abr<=48]/worstaudio/bestaudio', // Prefer tiny audio stream
+        '--extract-audio',
+        '--audio-format', 'm4a',
+        '--audio-quality', '9',            // Lowest quality = smallest file
+        '--no-playlist',
+        '--no-warnings',
+        '--quiet',
+        '--no-progress',
+        '--output', outputPath
+      ];
+
+      // Optionally attach cookies file for age-restricted / bot-challenged videos
+      const cookiePath = path.resolve(__dirname, '../../data/youtube_cookies.txt');
+      if (fs.existsSync(cookiePath)) {
+        ytdlpArgs.push('--cookies', cookiePath);
+        logger.debug('🍪 Attaching youtube_cookies.txt to yt-dlp for authenticated download.');
+      }
+
+      // Run yt-dlp as a child process
       await new Promise((resolve, reject) => {
-        const downloadOptions = {
-          filter: 'audioonly',
-          quality: 'lowestaudio'
-        };
+        const proc = spawn('yt-dlp', ytdlpArgs);
+        let stderr = '';
 
-        if (ytdlAgent) {
-          downloadOptions.agent = ytdlAgent;
-        }
-
-        const stream = ytdl(`https://www.youtube.com/watch?v=${videoId}`, downloadOptions);
-        
-        // CRITICAL: Catch errors directly on the ytdl stream to prevent process crash
-        stream.on('error', (err) => {
-          reject(err);
+        proc.stderr.on('data', (data) => {
+          stderr += data.toString();
         });
 
-        const fileStream = fs.createWriteStream(outputPath);
-        fileStream.on('finish', () => resolve());
-        fileStream.on('error', (err) => reject(err));
+        proc.on('close', (code) => {
+          if (code === 0) {
+            resolve();
+          } else {
+            reject(new Error(`yt-dlp exited with code ${code}: ${stderr.trim()}`.substring(0, 300)));
+          }
+        });
 
-        stream.pipe(fileStream);
+        proc.on('error', (err) => {
+          reject(new Error(`Failed to spawn yt-dlp: ${err.message}`));
+        });
       });
 
       const audioBytes = fs.readFileSync(outputPath);
-      logger.info(`🎙️ Uploading audio payload (~${Math.round(audioBytes.length / 1024)} KB) directly to Gemini 3.1 Flash Lite...`);
+      logger.info(`🎙️ [yt-dlp] Downloaded ~${Math.round(audioBytes.length / 1024)} KB audio. Sending to Gemini 3.1 Flash Lite...`);
 
-      // Construct native inline multimodal part
+      // Construct native inline multimodal part for Gemini
       const audioPart = {
         inlineData: {
           data: audioBytes.toString('base64'),
-          mimeType: 'audio/mp3'
+          mimeType: 'audio/mp4'
         }
       };
 
       const model = this.genAI.getGenerativeModel({ model: 'gemini-3.1-flash-lite' });
-      const prompt = 'Transcribe this audio accurately. Write it in the original language (Hindi/English). Provide a clean, readable text output.';
+      const prompt = 'Transcribe this audio accurately. Write it in the original language (Hindi/English/mixed). Provide a clean, readable text output with no timestamps.';
 
       const result = await model.generateContent([prompt, audioPart]);
       const transcript = result.response.text();
-      
+
       logger.info(`✅ Gemini Audio transcription completed (~${transcript.length} chars generated)`);
       return transcript;
-    } catch (ytdlErr) {
-      logger.warn(`⚠️ YouTube audio stream download blocked: ${ytdlErr.message}. Cascading to Layer 3: Google Search Grounding...`);
-      
+
+    } catch (ytdlpErr) {
+      logger.warn(`⚠️ yt-dlp audio download failed: ${ytdlpErr.message}. Cascading to Layer 3: Google Search Grounding...`);
+
       try {
         const model = this.genAI.getGenerativeModel({
           model: 'gemini-2.5-flash',
           tools: [{ googleSearch: {} }]
         });
-        
+
         const prompt = `Search Google for transcripts, details, articles, or summaries of the YouTube video: https://youtu.be/${videoId}.
 Reconstruct a detailed outline of this video's contents, focusing specifically on credit cards, hacks, strategic tricks, savings, or shopping offers discussed.
 Provide a complete, long text explanation (~500 words) of the video content.`;
 
         const result = await model.generateContent(prompt);
         const searchOutput = result.response.text();
-        
+
         logger.info(`✅ Google Search Grounding retrieved outline successfully (~${searchOutput.length} chars generated)`);
         return searchOutput;
       } catch (groundingErr) {
         logger.error(`❌ Google Search Grounding failed: ${groundingErr.message}`);
-        throw new Error(`Both Audio Download and Google Search Grounding failed: ${groundingErr.message}`);
+        throw new Error(`Both yt-dlp and Google Search Grounding failed: ${groundingErr.message}`);
       }
     } finally {
-      // Always cleanup temporary audio file to maintain zero host footprint
+      // Always cleanup temporary audio file to maintain zero disk footprint
       if (fs.existsSync(outputPath)) {
         try {
           fs.unlinkSync(outputPath);
           logger.debug(`🧹 Cleaned up temporary audio file: ${outputPath}`);
         } catch (e) {
-          logger.debug(`Could not clean up temporary file ${outputPath}: ${e.message}`);
+          logger.debug(`Could not clean up temp file ${outputPath}: ${e.message}`);
         }
       }
     }

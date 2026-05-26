@@ -21,7 +21,7 @@ WORKDIR /app
 ENV NODE_ENV=production
 ENV PORT=3000
 
-# Install Chromium and system dependencies for Puppeteer
+# Install Chromium, system dependencies for Puppeteer, and yt-dlp (YouTube audio downloader)
 RUN apt-get update && apt-get install -y \
     chromium \
     libnss3 \
@@ -38,8 +38,12 @@ RUN apt-get update && apt-get install -y \
     libxrandr2 \
     libgbm1 \
     libasound2 \
+    python3 \
+    python3-pip \
+    ffmpeg \
     --no-install-recommends \
-    && rm -rf /var/lib/apt/lists/*
+    && pip3 install yt-dlp --break-system-packages \
+    && rm -rf /var/lib/apt/lists/* /root/.cache/pip
 
 ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
 ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
