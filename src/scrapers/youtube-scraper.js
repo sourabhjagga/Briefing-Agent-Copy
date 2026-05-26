@@ -134,16 +134,30 @@ class YoutubeScraper {
 
     logger.debug(`Resolving YouTube channel via HTTP: ${cleanUrl}`);
     const res = await axios.get(cleanUrl, {
-      headers: { 'User-Agent': this.userAgent },
+      headers: { 
+        'User-Agent': this.userAgent,
+        'Accept-Language': 'en-US,en;q=0.9'
+      },
       timeout: 15000
     });
 
     const html = res.data;
+    
+    // Pattern 1: standard metadata itemprop
     const match = html.match(/<meta[^>]*itemprop="channelId"[^>]*content="([^"]+)"/);
     if (match) return match[1];
 
+    // Pattern 2: direct JSON config channelId value
     const match2 = html.match(/"channelId":"(UC[a-zA-Z0-9_-]{22})"/);
     if (match2) return match2[1];
+
+    // Pattern 3: ytInitialData navigationEndpoint payload
+    const match3 = html.match(/"browseId":"(UC[a-zA-Z0-9_-]{22})"/);
+    if (match3) return match3[1];
+
+    // Pattern 4: RSS link href resolution
+    const match4 = html.match(/href="https:\/\/www\.youtube\.com\/feeds\/videos\.xml\?channel_id=(UC[a-zA-Z0-9_-]{22})"/);
+    if (match4) return match4[1];
 
     throw new Error('Could not discover Channel ID inside the YouTube page HTML structure.');
   }

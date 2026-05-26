@@ -3,10 +3,10 @@ const path = require('path');
 
 const logFilePath = path.resolve(__dirname, '../logs/agent.log');
 
-// Helper to format timestamps
+// Helper to format timestamps in Asia/Kolkata timezone
 function getTimestamp() {
   const d = new Date();
-  return d.toISOString().replace('T', ' ').substring(0, 19);
+  return d.toLocaleString('sv-SE', { timeZone: 'Asia/Kolkata' }).substring(0, 19);
 }
 
 // Ensure logs directory exists
