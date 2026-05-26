@@ -26,7 +26,7 @@ RUN apt-get update && apt-get install -y \
     chromium \
     libnss3 \
     libnspr4 \
-    libatk-1.0-0 \
+    libatk1.0-0 \
     libatk-bridge2.0-0 \
     libcups2 \
     libdrm2 \
