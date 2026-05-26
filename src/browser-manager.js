@@ -46,6 +46,7 @@ class BrowserManager {
           '--disable-dev-shm-usage',
           '--disable-accelerated-2d-canvas',
           '--disable-gpu',
+          '--disable-crash-reporter',
           '--window-size=1280,720'
         ]
       });
