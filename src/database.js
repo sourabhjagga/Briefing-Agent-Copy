@@ -337,9 +337,20 @@ class MessageDatabase {
     if (!ccExists) {
       this.addCategory('cc', 'Credit Cards', ccBotToken, ccChatId, null);
     }
+    
+    const premiumDealsPrompt = 'You are a premium, high-impact Shopping Deals AI assistant. Summarize the best, high-value shopping deals from the provided messages. Organize deals cleanly into logical categories (e.g., 💻 Electronics & Gadgets, 👕 Fashion & Lifestyle, 🛒 Groceries & Essentials, 🎫 Gift Cards & Vouchers, ✈️ Travel & Others).\nFor each deal:\n- Highlight the product/deal name and the final deal price or discount percentage in bold.\n- Isolate credit card specific savings or cashbacks (e.g., HDFC/SBI card discounts) and state them clearly.\n- Provide direct link and deal source details.\nAvoid listing minor items, generic spams, or deals with no clear details/prices. Keep the brief exciting, highly structured, and elegant!';
+    
     const dealsExists = this.getCategoryBySlug('deals');
-    if (!dealsExists && dealsBotToken) {
-      this.addCategory('deals', 'Shopping Deals', dealsBotToken, dealsChatId, 'You are a shopping deals expert. Summarize the best deals from the provided messages. Mention the product, the deal price or discount, and any links. Organize it by categories (e.g., Electronics, Fashion, Travel). Keep it exciting and brief!');
+    if (!dealsExists) {
+      if (dealsBotToken) {
+        this.addCategory('deals', 'Shopping Deals', dealsBotToken, dealsChatId, premiumDealsPrompt);
+      }
+    } else {
+      // Auto-upgrade old default deals prompt to the premium version
+      if (!dealsExists.ai_prompt || dealsExists.ai_prompt.includes('shopping deals expert')) {
+        this.db.prepare("UPDATE categories SET ai_prompt = ? WHERE slug = 'deals'").run(premiumDealsPrompt);
+        logger.info('🚀 Auto-upgraded Deals AI Prompt in database to premium version.');
+      }
     }
   }
 
