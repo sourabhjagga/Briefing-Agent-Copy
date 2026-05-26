@@ -134,7 +134,8 @@ class RedditScraper {
     logger.debug(`Reddit Layer 2: Attempting authenticated HTTP scraper for r/${sub}`);
     try {
       // 1. Validate if cookies are active
-      const isSessionActive = await this._verifyRedditSession();
+      const dbCookies = this.database.getCookies('reddit');
+      const isSessionActive = await this._verifyRedditSession(dbCookies);
       if (!isSessionActive) {
         if (!this.isSessionAlerted && this.onAlert) {
           if (typeof this.onAlert === 'function') {
@@ -153,13 +154,8 @@ class RedditScraper {
       this.isSessionAlerted = false; // Reset alert status on successful session
 
       // 2. Fetch target HTML page using session cookies
-      const res = await axios.get(`https://www.reddit.com/r/${sub}/new/`, {
-        headers: {
-          'User-Agent': this.userAgent,
-          'Cookie': this.cookiesHeader
-        },
-        timeout: 20000
-      });
+      const dbCookies = this.database.getCookies('reddit');
+      const res = await this._executeGetRequest(`https://www.reddit.com/r/${sub}/new/`, dbCookies);
 
       const $ = cheerio.load(res.data);
       const posts = [];
@@ -239,18 +235,11 @@ class RedditScraper {
     }
   }
 
-  async _verifyRedditSession() {
+  async _verifyRedditSession(cookiesArray = null) {
     try {
-      const res = await axios.get('https://www.reddit.com/settings', {
-        headers: {
-          'User-Agent': this.userAgent,
-          'Cookie': this.cookiesHeader
-        },
-        maxRedirects: 0,
-        validateStatus: (status) => status === 200,
-        timeout: 15000
-      });
-      return res.status === 200;
+      const res = await this._executeGetRequest('https://www.reddit.com/settings', cookiesArray);
+      // Under FlareSolverr, successfully getting settings means authenticated
+      return true;
     } catch (err) {
       return false;
     }
@@ -295,6 +284,60 @@ class RedditScraper {
       clean = clean.replace('r/', '');
     }
     return clean.split('/')[0].split('?')[0];
+  }
+
+  async _executeGetRequest(url, cookiesArray = null) {
+    const flaresolverrUrl = process.env.FLARESOLVERR_URL;
+    if (flaresolverrUrl) {
+      logger.debug(`[FlareSolverr] Performing GET request for: ${url}`);
+      try {
+        const payload = {
+          cmd: 'request.get',
+          url: url,
+          maxTimeout: 30000,
+        };
+        if (cookiesArray && Array.isArray(cookiesArray) && cookiesArray.length > 0) {
+          payload.cookies = cookiesArray.map(c => ({
+            name: c.name,
+            value: c.value,
+            domain: c.domain || '.reddit.com',
+            path: c.path || '/'
+          }));
+        }
+        const res = await axios.post(flaresolverrUrl, payload, {
+          headers: { 'Content-Type': 'application/json' },
+          timeout: 35000
+        });
+        if (res.data && res.data.status === 'ok' && res.data.solution) {
+          if (res.data.solution.cookies) {
+            this._saveUpdatedCookies(res.data.solution.cookies);
+          }
+          return { data: res.data.solution.response };
+        }
+        throw new Error(res.data ? res.data.message : 'Unknown FlareSolverr error');
+      } catch (err) {
+        logger.error(`[FlareSolverr] Failed request for ${url}: ${err.message}. Falling back to standard Axios...`);
+      }
+    }
+
+    return axios.get(url, {
+      headers: {
+        'User-Agent': this.userAgent,
+        'Cookie': this.cookiesHeader
+      },
+      timeout: 20000
+    });
+  }
+
+  _saveUpdatedCookies(newCookies) {
+    if (!newCookies || !Array.isArray(newCookies)) return;
+    try {
+      this.database.saveCookies('reddit', newCookies);
+      this.cookiesHeader = newCookies.map(c => `${c.name}=${c.value}`).join('; ');
+      logger.debug('💾 [FlareSolverr] Successfully updated session cookies in database.');
+    } catch (e) {
+      logger.debug(`Failed to save updated cookies from FlareSolverr: ${e.message}`);
+    }
   }
 }
 

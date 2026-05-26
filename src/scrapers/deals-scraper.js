@@ -53,13 +53,8 @@ class DealsScraper {
         logger.warn('⚠️  Scraping DesiDime in GUEST mode (limited pagination or customized feed).');
       }
 
-      const res = await axios.get(this.targetUrl, {
-        headers: {
-          'User-Agent': this.userAgent,
-          'Cookie': this.cookiesHeader
-        },
-        timeout: 20000
-      });
+      const dbCookies = this.database.getCookies('desidime');
+      const res = await this._executeGetRequest(this.targetUrl, dbCookies);
 
       const $ = cheerio.load(res.data);
       const deals = [];
@@ -153,7 +148,7 @@ class DealsScraper {
       cookiesArray = this.database.getCookies('desidime');
       if (cookiesArray && Array.isArray(cookiesArray) && cookiesArray.length > 0) {
         this.cookiesHeader = this._formatCookieHeader(cookiesArray);
-        const isValid = await this._verifySession();
+        const isValid = await this._verifySession(cookiesArray);
         if (isValid) {
           logger.info('✅ Persistent DesiDime session cookies loaded from database and verified.');
           this.isSessionAlerted = false;
@@ -175,7 +170,7 @@ class DealsScraper {
         this.cookiesHeader = this._formatCookieHeader(cookiesArray);
         
         // Verify active session
-        const isValid = await this._verifySession();
+        const isValid = await this._verifySession(cookiesArray);
         if (isValid) {
           logger.info('✅ Persistent DesiDime session cookies loaded from legacy file and verified.');
           // Seed back into SQLite database
@@ -217,15 +212,9 @@ class DealsScraper {
     return false;
   }
 
-  async _verifySession() {
+  async _verifySession(cookiesArray = null) {
     try {
-      const res = await axios.get('https://www.desidime.com/', {
-        headers: {
-          'User-Agent': this.userAgent,
-          'Cookie': this.cookiesHeader
-        },
-        timeout: 15000
-      });
+      const res = await this._executeGetRequest('https://www.desidime.com/', cookiesArray);
 
       const $ = cheerio.load(res.data);
       // DesiDime logged-in markers
@@ -319,6 +308,60 @@ class DealsScraper {
 
   _formatCookieHeader(cookiesArray) {
     return cookiesArray.map(c => `${c.name}=${c.value}`).join('; ');
+  }
+
+  async _executeGetRequest(url, cookiesArray = null) {
+    const flaresolverrUrl = process.env.FLARESOLVERR_URL;
+    if (flaresolverrUrl) {
+      logger.debug(`[FlareSolverr] Performing GET request for: ${url}`);
+      try {
+        const payload = {
+          cmd: 'request.get',
+          url: url,
+          maxTimeout: 30000,
+        };
+        if (cookiesArray && Array.isArray(cookiesArray) && cookiesArray.length > 0) {
+          payload.cookies = cookiesArray.map(c => ({
+            name: c.name,
+            value: c.value,
+            domain: c.domain || '.desidime.com',
+            path: c.path || '/'
+          }));
+        }
+        const res = await axios.post(flaresolverrUrl, payload, {
+          headers: { 'Content-Type': 'application/json' },
+          timeout: 35000
+        });
+        if (res.data && res.data.status === 'ok' && res.data.solution) {
+          if (res.data.solution.cookies) {
+            this._saveUpdatedCookies(res.data.solution.cookies);
+          }
+          return { data: res.data.solution.response };
+        }
+        throw new Error(res.data ? res.data.message : 'Unknown FlareSolverr error');
+      } catch (err) {
+        logger.error(`[FlareSolverr] Failed request for ${url}: ${err.message}. Falling back to standard Axios...`);
+      }
+    }
+
+    return axios.get(url, {
+      headers: {
+        'User-Agent': this.userAgent,
+        'Cookie': this.cookiesHeader
+      },
+      timeout: 20000
+    });
+  }
+
+  _saveUpdatedCookies(newCookies) {
+    if (!newCookies || !Array.isArray(newCookies)) return;
+    try {
+      this.database.saveCookies('desidime', newCookies);
+      this.cookiesHeader = this._formatCookieHeader(newCookies);
+      logger.debug('💾 [FlareSolverr] Successfully updated session cookies in database.');
+    } catch (e) {
+      logger.debug(`Failed to save updated cookies from FlareSolverr: ${e.message}`);
+    }
   }
 }
 

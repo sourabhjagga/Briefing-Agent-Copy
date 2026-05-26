@@ -77,7 +77,7 @@ class ForumScraper {
       cookiesArray = this.database.getCookies('technofino');
       if (cookiesArray && Array.isArray(cookiesArray) && cookiesArray.length > 0) {
         this.cookiesHeader = this._formatCookieHeader(cookiesArray);
-        const isValid = await this._verifySession();
+        const isValid = await this._verifySession(cookiesArray);
         if (isValid) {
           logger.info('✅ Persistent Technofino session loaded from database and verified!');
           this.isSessionAlerted = false;
@@ -99,7 +99,7 @@ class ForumScraper {
         this.cookiesHeader = this._formatCookieHeader(cookiesArray);
         
         // Validate if session is active
-        const isValid = await this._verifySession();
+        const isValid = await this._verifySession(cookiesArray);
         if (isValid) {
           logger.info('✅ Persistent Technofino session loaded from legacy file and verified!');
           // Seed back into SQLite database
@@ -141,16 +141,10 @@ class ForumScraper {
     return false;
   }
 
-  async _verifySession() {
+  async _verifySession(cookiesArray = null) {
     try {
       // Fetch What's New which requires user session for full contents
-      const res = await axios.get('https://technofino.in/community/whats-new/posts/', {
-        headers: {
-          'User-Agent': this.userAgent,
-          'Cookie': this.cookiesHeader
-        },
-        timeout: 15000
-      });
+      const res = await this._executeGetRequest('https://technofino.in/community/whats-new/posts/', cookiesArray);
 
       const $ = cheerio.load(res.data);
       // Check for XenForo logged-in marker (like href containing logout)
@@ -236,13 +230,8 @@ class ForumScraper {
   async _scrapeTarget(target) {
     logger.debug(`Scraping Technofino target: "${target.name}"`);
     try {
-      const res = await axios.get(target.url, {
-        headers: {
-          'User-Agent': this.userAgent,
-          'Cookie': this.cookiesHeader
-        },
-        timeout: 20000
-      });
+      const dbCookies = this.database.getCookies('technofino');
+      const res = await this._executeGetRequest(target.url, dbCookies);
 
       const $ = cheerio.load(res.data);
       const items = [];
@@ -309,6 +298,60 @@ class ForumScraper {
 
   _formatCookieHeader(cookiesArray) {
     return cookiesArray.map(c => `${c.name}=${c.value}`).join('; ');
+  }
+
+  async _executeGetRequest(url, cookiesArray = null) {
+    const flaresolverrUrl = process.env.FLARESOLVERR_URL;
+    if (flaresolverrUrl) {
+      logger.debug(`[FlareSolverr] Performing GET request for: ${url}`);
+      try {
+        const payload = {
+          cmd: 'request.get',
+          url: url,
+          maxTimeout: 30000,
+        };
+        if (cookiesArray && Array.isArray(cookiesArray) && cookiesArray.length > 0) {
+          payload.cookies = cookiesArray.map(c => ({
+            name: c.name,
+            value: c.value,
+            domain: c.domain || '.technofino.in',
+            path: c.path || '/'
+          }));
+        }
+        const res = await axios.post(flaresolverrUrl, payload, {
+          headers: { 'Content-Type': 'application/json' },
+          timeout: 35000
+        });
+        if (res.data && res.data.status === 'ok' && res.data.solution) {
+          if (res.data.solution.cookies) {
+            this._saveUpdatedCookies(res.data.solution.cookies);
+          }
+          return { data: res.data.solution.response };
+        }
+        throw new Error(res.data ? res.data.message : 'Unknown FlareSolverr error');
+      } catch (err) {
+        logger.error(`[FlareSolverr] Failed request for ${url}: ${err.message}. Falling back to standard Axios...`);
+      }
+    }
+
+    return axios.get(url, {
+      headers: {
+        'User-Agent': this.userAgent,
+        'Cookie': this.cookiesHeader
+      },
+      timeout: 20000
+    });
+  }
+
+  _saveUpdatedCookies(newCookies) {
+    if (!newCookies || !Array.isArray(newCookies)) return;
+    try {
+      this.database.saveCookies('technofino', newCookies);
+      this.cookiesHeader = this._formatCookieHeader(newCookies);
+      logger.debug('💾 [FlareSolverr] Successfully updated session cookies in database.');
+    } catch (e) {
+      logger.debug(`Failed to save updated cookies from FlareSolverr: ${e.message}`);
+    }
   }
 }
 
