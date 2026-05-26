@@ -47,7 +47,7 @@ ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
 # Create application user and runtime directories for data persistence
 # Debian standard groupadd and useradd used for container security
 RUN groupadd -r agentsg && \
-    useradd -r -g agentsg agentuser && \
+    useradd -r -m -g agentsg agentuser && \
     mkdir -p data logs && \
     chown -R agentuser:agentsg /app
 
