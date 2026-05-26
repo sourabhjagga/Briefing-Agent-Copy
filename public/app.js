@@ -542,41 +542,50 @@ function App() {
             <div className="modal-body">
               {discoverLoading ? (
                 <div className="loader"></div>
-              ) : discoverList.length === 0 ? (
-                <p style={{ color: 'var(--text-muted)', textAlign: 'center', padding: '20px' }}>
-                  No channels or chats found. Verify your active session connection.
-                </p>
-              ) : (
-                <div>
-                  <p style={{ color: 'var(--text-muted)', fontSize: '0.9em', marginBottom: '15px' }}>
-                    Click either button to add a discovered chat directly into the target active monitor grid (seeded as inactive first).
-                  </p>
-                  {discoverList.map(item => (
-                    <div className="modal-list-item" key={item.id}>
-                      <div className="modal-list-item-info">
-                        <span className="modal-list-item-name">{item.name}</span>
-                        <span className="modal-list-item-id">{item.id}</span>
+              ) : (() => {
+                const addedSourceIds = new Set(sources.map(s => (s.source_id || '').toLowerCase().trim()));
+                const filteredList = discoverList.filter(item => item && item.id && !addedSourceIds.has(item.id.toLowerCase().trim()));
+                
+                if (filteredList.length === 0) {
+                  return (
+                    <p style={{ color: 'var(--text-muted)', textAlign: 'center', padding: '20px' }}>
+                      No new channels or chats found (all discovered sources are already being monitored!).
+                    </p>
+                  );
+                }
+                
+                return (
+                  <div>
+                    <p style={{ color: 'var(--text-muted)', fontSize: '0.9em', marginBottom: '15px' }}>
+                      Click either button to add a discovered chat directly into the target active monitor grid (seeded as inactive first).
+                    </p>
+                    {filteredList.map(item => (
+                      <div className="modal-list-item" key={item.id}>
+                        <div className="modal-list-item-info">
+                          <span className="modal-list-item-name">{item.name}</span>
+                          <span className="modal-list-item-id">{item.id}</span>
+                        </div>
+                        <div style={{ display: 'flex', gap: '8px' }}>
+                          <button 
+                            onClick={() => handleAddDiscoveredSource(item, 'cc')} 
+                            className="btn-add" 
+                            style={{ height: '36px', padding: '0 10px', fontSize: '0.82em', background: 'linear-gradient(135deg, var(--primary) 0%, #1e40af 100%)', display: 'flex', alignItems: 'center', gap: '4px' }}
+                          >
+                            💳 CC
+                          </button>
+                          <button 
+                            onClick={() => handleAddDiscoveredSource(item, 'deals')} 
+                            className="btn-add" 
+                            style={{ height: '36px', padding: '0 10px', fontSize: '0.82em', background: 'linear-gradient(135deg, #10b981 0%, #047857 100%)', display: 'flex', alignItems: 'center', gap: '4px' }}
+                          >
+                            🔥 Deals
+                          </button>
+                        </div>
                       </div>
-                      <div style={{ display: 'flex', gap: '8px' }}>
-                        <button 
-                          onClick={() => handleAddDiscoveredSource(item, 'cc')} 
-                          className="btn-add" 
-                          style={{ height: '36px', padding: '0 10px', fontSize: '0.82em', background: 'linear-gradient(135deg, var(--primary) 0%, #1e40af 100%)', display: 'flex', alignItems: 'center', gap: '4px' }}
-                        >
-                          💳 CC
-                        </button>
-                        <button 
-                          onClick={() => handleAddDiscoveredSource(item, 'deals')} 
-                          className="btn-add" 
-                          style={{ height: '36px', padding: '0 10px', fontSize: '0.82em', background: 'linear-gradient(135deg, #10b981 0%, #047857 100%)', display: 'flex', alignItems: 'center', gap: '4px' }}
-                        >
-                          🔥 Deals
-                        </button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
+                    ))}
+                  </div>
+                );
+              })()}
             </div>
           </div>
         </div>

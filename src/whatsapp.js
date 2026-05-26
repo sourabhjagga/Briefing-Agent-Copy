@@ -72,6 +72,47 @@ class WhatsAppListener {
       // Listen for credentials updates to save session
       this.sock.ev.on('creds.update', saveCreds);
 
+      // Dynamically capture participating groups and channels (newsletters) from standard history sync
+      this.sock.ev.on('chats.set', ({ chats }) => {
+        if (chats && Array.isArray(chats)) {
+          let count = 0;
+          chats.forEach(c => {
+            if (c && c.id) {
+              const id = c.id.toLowerCase().trim();
+              if (id.includes('@newsletter') || id.includes('@g.us')) {
+                const name = c.name || (id.includes('@newsletter') ? 'WhatsApp Channel' : 'WhatsApp Group');
+                this.chatNameMap[id] = name;
+                count++;
+              }
+            }
+          });
+          if (count > 0) {
+            this._saveChatNameMap();
+            logger.info(`📡 Synced ${count} active groups/newsletters from history sync (chats.set).`);
+          }
+        }
+      });
+
+      this.sock.ev.on('chats.upsert', (chats) => {
+        if (chats && Array.isArray(chats)) {
+          let count = 0;
+          chats.forEach(c => {
+            if (c && c.id) {
+              const id = c.id.toLowerCase().trim();
+              if (id.includes('@newsletter') || id.includes('@g.us')) {
+                const name = c.name || (id.includes('@newsletter') ? 'WhatsApp Channel' : 'WhatsApp Group');
+                this.chatNameMap[id] = name;
+                count++;
+              }
+            }
+          });
+          if (count > 0) {
+            this._saveChatNameMap();
+            logger.info(`📡 Synced ${count} new/updated groups/newsletters (chats.upsert).`);
+          }
+        }
+      });
+
       // Listen for connection states
       this.sock.ev.on('connection.update', async (update) => {
         const { connection, lastDisconnect, qr } = update;
