@@ -47,6 +47,7 @@ class BrowserManager {
           '--disable-accelerated-2d-canvas',
           '--disable-gpu',
           '--disable-crash-reporter',
+          '--crash-dumps-dir=/tmp',
           '--window-size=1280,720'
         ]
       });
