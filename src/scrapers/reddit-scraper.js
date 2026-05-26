@@ -313,7 +313,10 @@ class RedditScraper {
         });
         if (res.data && res.data.status === 'ok' && res.data.solution) {
           if (res.data.solution.cookies) {
-            this._saveUpdatedCookies(res.data.solution.cookies);
+            const html = res.data.solution.response || '';
+            const isAuthed = !html.includes('login') || !(html.includes('password') && html.includes('username'));
+            
+            this._saveUpdatedCookies(res.data.solution.cookies, isAuthed);
           }
           return { data: res.data.solution.response };
         }
@@ -332,36 +335,31 @@ class RedditScraper {
     });
   }
 
-  _saveUpdatedCookies(newCookies) {
+  _saveUpdatedCookies(newCookies, isAuthenticated = true) {
     if (!newCookies || !Array.isArray(newCookies)) return;
     try {
       const originalCookies = this.database.getCookies('reddit') || [];
-      const mergedCookies = this._mergeCookies(originalCookies, newCookies, ['reddit_session']);
+      const mergedCookies = this._mergeCookies(originalCookies, newCookies, ['reddit_session'], isAuthenticated);
 
       this.database.saveCookies('reddit', mergedCookies);
       this.cookiesHeader = mergedCookies.map(c => `${c.name}=${c.value}`).join('; ');
-      logger.debug('💾 [FlareSolverr] Successfully merged and updated session cookies in database.');
+      logger.debug(`💾 [FlareSolverr] Successfully merged and updated cookies in database. Authenticated: ${isAuthenticated}`);
     } catch (e) {
       logger.debug(`Failed to save updated cookies from FlareSolverr: ${e.message}`);
     }
   }
 
-  _mergeCookies(originalCookies, newCookies, essentialKeys) {
+  _mergeCookies(originalCookies, newCookies, essentialKeys, isAuthenticated = true) {
     if (!newCookies || !Array.isArray(newCookies)) return originalCookies;
     if (!originalCookies || !Array.isArray(originalCookies)) return newCookies;
-
-    // Check if the new cookies list has essential logged-in keys
-    const hasEssential = essentialKeys.every(key => 
-      newCookies.some(c => c.name === key && c.value && c.value !== '')
-    );
 
     const mergedMap = {};
     originalCookies.forEach(c => { mergedMap[c.name] = c; });
 
     newCookies.forEach(c => {
-      // If the new list is unauthenticated (guest) and this is an essential key,
-      // preserve the original active login cookie!
-      if (essentialKeys.includes(c.name) && !hasEssential) {
+      // If the response is NOT authenticated, preserve the original login session cookies!
+      // Do not overwrite them with guest cookies.
+      if (essentialKeys.includes(c.name) && !isAuthenticated) {
         logger.debug(`[FlareSolverr] Preserving original session cookie: ${c.name}`);
         return;
       }

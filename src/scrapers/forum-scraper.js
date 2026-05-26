@@ -350,7 +350,17 @@ class ForumScraper {
         });
         if (res.data && res.data.status === 'ok' && res.data.solution) {
           if (res.data.solution.cookies) {
-            this._saveUpdatedCookies(res.data.solution.cookies);
+            const html = res.data.solution.response || '';
+            const $ = cheerio.load(html);
+            const hasMemberNav = $('.p-navgroup--member').length > 0;
+            const hasLogout = $('a[href*="logout"]').length > 0;
+            const isHtmlLoggedIn = $('html[data-logged-in="true"]').length > 0;
+            const hasAccountLink = $('a[href*="account/"]').length > 0;
+            const threadCount = $('.structItem--thread').length;
+            
+            const isAuthed = hasMemberNav || hasLogout || isHtmlLoggedIn || hasAccountLink || (threadCount > 0 && url.includes('vip-credit-card-lounge'));
+            
+            this._saveUpdatedCookies(res.data.solution.cookies, isAuthed);
           }
           return { data: res.data.solution.response };
         }
@@ -369,36 +379,31 @@ class ForumScraper {
     });
   }
 
-  _saveUpdatedCookies(newCookies) {
+  _saveUpdatedCookies(newCookies, isAuthenticated = true) {
     if (!newCookies || !Array.isArray(newCookies)) return;
     try {
       const originalCookies = this.database.getCookies('technofino') || [];
-      const mergedCookies = this._mergeCookies(originalCookies, newCookies, ['xf_user', 'xf_session']);
+      const mergedCookies = this._mergeCookies(originalCookies, newCookies, ['xf_user', 'xf_session'], isAuthenticated);
 
       this.database.saveCookies('technofino', mergedCookies);
       this.cookiesHeader = this._formatCookieHeader(mergedCookies);
-      logger.debug('💾 [FlareSolverr] Successfully merged and updated session cookies in database.');
+      logger.debug(`💾 [FlareSolverr] Successfully merged and updated cookies in database. Authenticated: ${isAuthenticated}`);
     } catch (e) {
       logger.debug(`Failed to save updated cookies from FlareSolverr: ${e.message}`);
     }
   }
 
-  _mergeCookies(originalCookies, newCookies, essentialKeys) {
+  _mergeCookies(originalCookies, newCookies, essentialKeys, isAuthenticated = true) {
     if (!newCookies || !Array.isArray(newCookies)) return originalCookies;
     if (!originalCookies || !Array.isArray(originalCookies)) return newCookies;
-
-    // Check if the new cookies list has essential logged-in keys
-    const hasEssential = essentialKeys.every(key => 
-      newCookies.some(c => c.name === key && c.value && c.value !== '')
-    );
 
     const mergedMap = {};
     originalCookies.forEach(c => { mergedMap[c.name] = c; });
 
     newCookies.forEach(c => {
-      // If the new list is unauthenticated (guest) and this is an essential key,
-      // preserve the original active login cookie!
-      if (essentialKeys.includes(c.name) && !hasEssential) {
+      // If the response is NOT authenticated, preserve the original login session cookies!
+      // Do not overwrite them with guest cookies.
+      if (essentialKeys.includes(c.name) && !isAuthenticated) {
         logger.debug(`[FlareSolverr] Preserving original session cookie: ${c.name}`);
         return;
       }
