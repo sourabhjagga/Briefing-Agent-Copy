@@ -196,6 +196,27 @@ class WhatsAppListener {
       this._saveChatNameMap();
       logger.info(`✅ Synced ${Object.keys(groups).length} participating groups from account.`);
 
+      // Sync subscribed newsletters/channels (e.g. @newsletter JIDs)
+      try {
+        logger.info('🔍 Fetching subscribed WhatsApp newsletters/channels...');
+        const newsletters = await this.sock.newsletterSubscribed();
+        if (newsletters && Array.isArray(newsletters)) {
+          let newsletterCount = 0;
+          newsletters.forEach(n => {
+            if (n && n.id) {
+              const id = n.id.toLowerCase();
+              const name = n.name || 'WhatsApp Channel';
+              this.chatNameMap[id] = name;
+              newsletterCount++;
+            }
+          });
+          this._saveChatNameMap();
+          logger.info(`✅ Synced ${newsletterCount} subscribed newsletters/channels from account.`);
+        }
+      } catch (newsErr) {
+        logger.warn(`Could not sync WhatsApp newsletters: ${newsErr.message}`);
+      }
+
       // Seeding latest messages of target groups that are quiet in the local DB
       for (const targetId of this.targetIds) {
         const exists = this.database.db.prepare('SELECT 1 FROM messages WHERE LOWER(group_id) = ? LIMIT 1').get(targetId);

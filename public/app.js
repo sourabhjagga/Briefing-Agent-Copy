@@ -230,11 +230,11 @@ function App() {
     }
   };
 
-  const handleAddDiscoveredSource = async (item) => {
+  const handleAddDiscoveredSource = async (item, category) => {
     const isTg = discoverType === 'telegram';
     const type = isTg 
-      ? (item.type === 'channel' ? 'cc-telegram' : 'deals-telegram')
-      : 'cc-whatsapp';
+      ? `${category}-telegram`
+      : `${category}-whatsapp`;
 
     try {
       const res = await fetch('/api/sources', {
@@ -549,7 +549,7 @@ function App() {
               ) : (
                 <div>
                   <p style={{ color: 'var(--text-muted)', fontSize: '0.9em', marginBottom: '15px' }}>
-                    Click "Monitor Source" to add any discovered chat into your active monitor grid (seeded as inactive first).
+                    Click either button to add a discovered chat directly into the target active monitor grid (seeded as inactive first).
                   </p>
                   {discoverList.map(item => (
                     <div className="modal-list-item" key={item.id}>
@@ -557,13 +557,22 @@ function App() {
                         <span className="modal-list-item-name">{item.name}</span>
                         <span className="modal-list-item-id">{item.id}</span>
                       </div>
-                      <button 
-                        onClick={() => handleAddDiscoveredSource(item)} 
-                        className="btn-add" 
-                        style={{ height: '36px', padding: '0 16px', fontSize: '0.85em' }}
-                      >
-                        ➕ Monitor Source
-                      </button>
+                      <div style={{ display: 'flex', gap: '8px' }}>
+                        <button 
+                          onClick={() => handleAddDiscoveredSource(item, 'cc')} 
+                          className="btn-add" 
+                          style={{ height: '36px', padding: '0 10px', fontSize: '0.82em', background: 'linear-gradient(135deg, var(--primary) 0%, #1e40af 100%)', display: 'flex', alignItems: 'center', gap: '4px' }}
+                        >
+                          💳 CC
+                        </button>
+                        <button 
+                          onClick={() => handleAddDiscoveredSource(item, 'deals')} 
+                          className="btn-add" 
+                          style={{ height: '36px', padding: '0 10px', fontSize: '0.82em', background: 'linear-gradient(135deg, #10b981 0%, #047857 100%)', display: 'flex', alignItems: 'center', gap: '4px' }}
+                        >
+                          🔥 Deals
+                        </button>
+                      </div>
                     </div>
                   ))}
                 </div>
