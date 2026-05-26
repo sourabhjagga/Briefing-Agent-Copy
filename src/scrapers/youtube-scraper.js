@@ -171,13 +171,49 @@ class YoutubeScraper {
     }
     const outputPath = path.join(tempDir, `${videoId}.mp3`);
 
+    let cookiesHeader = '';
+    const cookiePath = path.resolve(__dirname, '../../data/youtube_cookies.txt');
+    if (fs.existsSync(cookiePath)) {
+      try {
+        const raw = fs.readFileSync(cookiePath, 'utf8');
+        const lines = raw.split('\n');
+        const pairs = [];
+        for (const line of lines) {
+          if (!line || line.startsWith('#')) continue;
+          const parts = line.split('\t');
+          if (parts.length >= 7) {
+            const name = parts[5].trim();
+            const value = parts[6].trim();
+            pairs.push(`${name}=${value}`);
+          }
+        }
+        if (pairs.length > 0) {
+          cookiesHeader = pairs.join('; ');
+          logger.info(`🍪 Parsed ${pairs.length} authenticated cookies from youtube_cookies.txt.`);
+        }
+      } catch (err) {
+        logger.error(`Failed to parse youtube_cookies.txt: ${err.message}`);
+      }
+    }
+
     try {
-      logger.info(`📥 Downloading raw low-quality audio for video ${videoId}...`);
+      logger.info(`📥 Downloading raw low-quality audio for video ${videoId} with verified cookies...`);
       await new Promise((resolve, reject) => {
-        ytdl(`https://www.youtube.com/watch?v=${videoId}`, {
+        const downloadOptions = {
           filter: 'audioonly',
-          quality: 'lowestaudio' // Tiny file size to avoid high latency or token limits
-        })
+          quality: 'lowestaudio'
+        };
+
+        if (cookiesHeader) {
+          downloadOptions.requestOptions = {
+            headers: {
+              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+              'Cookie': cookiesHeader
+            }
+          };
+        }
+
+        ytdl(`https://www.youtube.com/watch?v=${videoId}`, downloadOptions)
         .pipe(fs.createWriteStream(outputPath))
         .on('finish', () => resolve())
         .on('error', (err) => reject(err));
