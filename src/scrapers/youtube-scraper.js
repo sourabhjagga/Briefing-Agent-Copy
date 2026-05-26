@@ -202,6 +202,28 @@ class YoutubeScraper {
       
       logger.info(`✅ Gemini Audio transcription completed (~${transcript.length} chars generated)`);
       return transcript;
+    } catch (ytdlErr) {
+      logger.warn(`⚠️ YouTube audio stream download blocked: ${ytdlErr.message}. Cascading to Layer 3: Google Search Grounding...`);
+      
+      try {
+        const model = this.genAI.getGenerativeModel({
+          model: 'gemini-1.5-flash',
+          tools: [{ googleSearch: {} }]
+        });
+        
+        const prompt = `Search Google for transcripts, details, articles, or summaries of the YouTube video: https://youtu.be/${videoId}.
+Reconstruct a detailed outline of this video's contents, focusing specifically on credit cards, hacks, strategic tricks, savings, or shopping offers discussed.
+Provide a complete, long text explanation (~500 words) of the video content.`;
+
+        const result = await model.generateContent(prompt);
+        const searchOutput = result.response.text();
+        
+        logger.info(`✅ Google Search Grounding retrieved outline successfully (~${searchOutput.length} chars generated)`);
+        return searchOutput;
+      } catch (groundingErr) {
+        logger.error(`❌ Google Search Grounding failed: ${groundingErr.message}`);
+        throw new Error(`Both Audio Download and Google Search Grounding failed: ${groundingErr.message}`);
+      }
     } finally {
       // Always cleanup temporary audio file to maintain zero host footprint
       if (fs.existsSync(outputPath)) {
