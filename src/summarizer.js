@@ -248,7 +248,7 @@ OUTPUT FORMAT (strict Telegram HTML — no markdown):
 
 STRICT RULES:
 - ONLY use Telegram-safe HTML tags: <b>, <i>, <code>, <u>, <s>, <a>. Nothing else. Do NOT use markdown.
-- For all links, ALWAYS use clean HTML hyperlinks with contextual anchor text, e.g. <a href="URL">Get Deal</a>, <a href="URL">View Source</a>, or <a href="URL">Read More</a>. NEVER print raw URLs or ugly URL-encoded strings in the final text.
+- For all links, ALWAYS use clean HTML hyperlinks wrapping contextual anchor text, e.g. <a href="URL">View Deal</a> or <a href="URL">Get Deal</a>. DO NOT print plain-text words like "View Deal" or "Get Deal" without the <a> anchor tag, and NEVER output raw plain URLs in the final text.
 - Format all prices in bold (e.g., <b>₹2,316</b>) and wrap bank card names in bold (e.g. <b>SBI Card</b>).
 - Wrap platform names, coupons, or steps in <code>code</code> tags.
 - DO NOT hallucinate. Every link, name, and price MUST correspond exactly to the MESSAGES DATA above.`;

@@ -357,7 +357,7 @@ class MessageDatabase {
       this.addCategory('cc', 'Credit Cards', ccBotToken, ccChatId, null);
     }
     
-    const premiumDealsPrompt = 'You are a premium, high-impact Shopping Deals AI assistant. Summarize the best, high-value shopping deals from the provided messages. Organize deals cleanly into logical categories (e.g., 💻 Electronics & Gadgets, 👕 Fashion & Lifestyle, 🛒 Groceries & Essentials, 🎫 Gift Cards & Vouchers, ✈️ Travel & Others).\nFor each deal:\n- Highlight the product/deal name and the final deal price or discount percentage in bold.\n- Isolate credit card specific savings or cashbacks (e.g., HDFC/SBI card discounts) and state them clearly.\n- Provide direct link and deal source details.\nAvoid listing minor items, generic spams, or deals with no clear details/prices. Keep the brief exciting, highly structured, and elegant!';
+    const premiumDealsPrompt = 'You are a premium, high-impact Shopping Deals AI assistant. Summarize the best, high-value shopping deals from the provided messages. Organize deals cleanly into logical categories (e.g., 💻 Electronics & Gadgets, 👕 Fashion & Lifestyle, 🛒 Groceries & Essentials, 🎫 Gift Cards & Vouchers, ✈️ Travel & Others).\nFor each deal:\n- Highlight the product/deal name and the final deal price or discount percentage in bold.\n- Isolate credit card specific savings or cashbacks (e.g., HDFC/SBI card discounts) and state them clearly.\n- CRITICAL: For every deal listing, you MUST provide the link as a clean HTML hyperlink: <a href="URL">View Deal</a> or <a href="URL">Get Deal</a>. DO NOT write "View Deal" or "Get Deal" as plain text without the <a> anchor tag, and NEVER print raw URLs.\nAvoid listing minor items, generic spams, or deals with no clear details/prices. Keep the brief exciting, highly structured, and elegant!';
     
     const dealsExists = this.getCategoryBySlug('deals');
     if (!dealsExists) {
@@ -365,10 +365,10 @@ class MessageDatabase {
         this.addCategory('deals', 'Shopping Deals', dealsBotToken, dealsChatId, premiumDealsPrompt);
       }
     } else {
-      // Auto-upgrade old default deals prompt to the premium version
-      if (!dealsExists.ai_prompt || dealsExists.ai_prompt.includes('shopping deals expert')) {
+      // Auto-upgrade Deals AI Prompt in database to enforce HTML hyperlinks
+      if (!dealsExists.ai_prompt || !dealsExists.ai_prompt.includes('MUST provide the link as a clean HTML hyperlink')) {
         this.db.prepare("UPDATE categories SET ai_prompt = ? WHERE slug = 'deals'").run(premiumDealsPrompt);
-        logger.info('🚀 Auto-upgraded Deals AI Prompt in database to premium version.');
+        logger.info('🚀 Auto-upgraded Deals AI Prompt in database to enforce HTML hyperlinks.');
       }
     }
   }
