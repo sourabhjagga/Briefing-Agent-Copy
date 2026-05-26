@@ -20,6 +20,7 @@
   "author": "Sourabh Jagga",
   "license": "MIT",
   "dependencies": {
+    "@google/generative-ai": "^0.11.0",
     "@whiskeysockets/baileys": "^6.7.18",
     "axios": "^1.7.2",
     "better-sqlite3": "^11.7.0",
