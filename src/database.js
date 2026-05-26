@@ -73,6 +73,17 @@ class MessageDatabase {
         is_active INTEGER DEFAULT 1,
         created_at TEXT DEFAULT (datetime('now'))
       );
+
+      CREATE TABLE IF NOT EXISTS categories (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        slug TEXT NOT NULL UNIQUE,
+        display_name TEXT NOT NULL,
+        bot_token TEXT,
+        chat_id TEXT,
+        ai_prompt TEXT,
+        is_active INTEGER DEFAULT 1,
+        created_at TEXT DEFAULT (datetime('now'))
+      );
     `);
   }
 
@@ -157,6 +168,34 @@ class MessageDatabase {
       `),
       deleteSource: this.db.prepare(`
         DELETE FROM sources WHERE id = ?
+      `),
+      getAllCategories: this.db.prepare(`
+        SELECT * FROM categories ORDER BY created_at ASC
+      `),
+      getActiveCategories: this.db.prepare(`
+        SELECT * FROM categories WHERE is_active = 1 ORDER BY created_at ASC
+      `),
+      getCategoryBySlug: this.db.prepare(`
+        SELECT * FROM categories WHERE slug = ?
+      `),
+      addCategory: this.db.prepare(`
+        INSERT INTO categories (slug, display_name, bot_token, chat_id, ai_prompt, is_active)
+        VALUES (?, ?, ?, ?, ?, 1)
+        ON CONFLICT(slug) DO UPDATE SET
+          display_name=excluded.display_name,
+          bot_token=excluded.bot_token,
+          chat_id=excluded.chat_id,
+          ai_prompt=excluded.ai_prompt,
+          is_active=1
+      `),
+      updateCategory: this.db.prepare(`
+        UPDATE categories SET display_name=?, bot_token=?, chat_id=?, ai_prompt=?, is_active=? WHERE id=?
+      `),
+      deleteCategory: this.db.prepare(`
+        DELETE FROM categories WHERE id = ? AND slug NOT IN ('cc', 'deals')
+      `),
+      toggleCategory: this.db.prepare(`
+        UPDATE categories SET is_active = ? WHERE id = ?
       `)
     };
   }
@@ -263,6 +302,49 @@ class MessageDatabase {
 
   deleteSource(id) {
     this.statements.deleteSource.run(id);
+  }
+
+  getAllCategories() {
+    return this.statements.getAllCategories.all();
+  }
+
+  getActiveCategories() {
+    return this.statements.getActiveCategories.all();
+  }
+
+  getCategoryBySlug(slug) {
+    return this.statements.getCategoryBySlug.get(slug);
+  }
+
+  addCategory(slug, displayName, botToken, chatId, aiPrompt) {
+    this.statements.addCategory.run(slug, displayName, botToken || null, chatId || null, aiPrompt || null);
+  }
+
+  updateCategory(id, displayName, botToken, chatId, aiPrompt, isActive) {
+    this.statements.updateCategory.run(displayName, botToken || null, chatId || null, aiPrompt || null, isActive ? 1 : 0, id);
+  }
+
+  deleteCategory(id) {
+    return this.statements.deleteCategory.run(id);
+  }
+
+  toggleCategory(id, isActive) {
+    this.statements.toggleCategory.run(isActive ? 1 : 0, id);
+  }
+
+  seedDefaultCategories(ccBotToken, ccChatId, dealsBotToken, dealsChatId) {
+    const ccExists = this.getCategoryBySlug('cc');
+    if (!ccExists) {
+      this.addCategory('cc', 'Credit Cards', ccBotToken, ccChatId, null);
+    }
+    const dealsExists = this.getCategoryBySlug('deals');
+    if (!dealsExists && dealsBotToken) {
+      this.addCategory('deals', 'Shopping Deals', dealsBotToken, dealsChatId, 'You are a shopping deals expert. Summarize the best deals from the provided messages. Mention the product, the deal price or discount, and any links. Organize it by categories (e.g., Electronics, Fashion, Travel). Keep it exciting and brief!');
+    }
+  }
+
+  getSourcesByCategory(categorySlug) {
+    return this.getAllSources().filter(s => s.type.startsWith(categorySlug + '-'));
   }
 
   _getMidnightIST() {

@@ -36,14 +36,13 @@ class WhatsAppListener {
 
   _refreshTargets() {
     try {
-      const activeCc = this.database.getActiveSourcesByType('cc-whatsapp');
-      const activeDeals = this.database.getActiveSourcesByType('deals-whatsapp');
-      const combined = [...activeCc, ...activeDeals];
+      // Load targets for ALL category types ending in -whatsapp
+      const allSources = this.database.getAllSources();
+      const whatsappSources = allSources.filter(s => s.is_active === 1 && s.type.endsWith('-whatsapp'));
       
-      this.targetIds = new Set(combined.map(id => id.trim().toLowerCase()));
+      this.targetIds = new Set(whatsappSources.map(s => s.source_id.trim().toLowerCase()));
 
       // Seed manually added database source names into chatNameMap dynamically
-      const allSources = this.database.getAllSources();
       let updated = false;
       allSources.forEach(s => {
         if (s.source_id && s.name) {
@@ -256,13 +255,14 @@ class WhatsAppListener {
       hasMedia: !!(msg.message?.imageMessage || msg.message?.videoMessage),
       mediaCaption: body,
       isForwarded: !!(msg.message?.extendedTextMessage?.contextInfo?.isForwarded),
-      sourceType: isChannel ? 'cc-whatsapp' : 'cc-whatsapp' // Categorized dynamically
+      sourceType: 'cc-whatsapp'
     };
 
-    // Determine CC or Deals type based on DB source configuration
-    const activeCc = this.database.getActiveSourcesByType('cc-whatsapp');
-    const isCc = activeCc.some(id => id.toLowerCase() === remoteJid);
-    messageData.sourceType = isCc ? 'cc-whatsapp' : 'deals-whatsapp';
+    // Determine category type dynamically based on DB source configuration
+    const matchingSource = this.database.getAllSources().find(
+      s => s.source_id.trim().toLowerCase() === remoteJid && s.is_active === 1
+    );
+    messageData.sourceType = matchingSource ? matchingSource.type : 'cc-whatsapp';
 
     this.database.saveMessage(messageData);
     this.messageCount++;
@@ -289,22 +289,49 @@ class WhatsAppListener {
       // Sync subscribed newsletters/channels (e.g. @newsletter JIDs)
       try {
         logger.info('🔍 Fetching subscribed WhatsApp newsletters/channels...');
-        const newsletters = await this.sock.newsletterSubscribed();
-        if (newsletters && Array.isArray(newsletters)) {
+        // Try multiple Baileys API variants for newsletter discovery
+        let newsletters = null;
+        
+        // Method 1: newsletterGetSubscribed (Baileys 6.7+)
+        if (typeof this.sock.newsletterGetSubscribed === 'function') {
+          newsletters = await this.sock.newsletterGetSubscribed();
+        }
+        // Method 2: Direct WA query for newsletter list
+        else if (typeof this.sock.query === 'function') {
+          try {
+            const result = await this.sock.query({
+              tag: 'iq',
+              attrs: { to: '@s.whatsapp.net', xmlns: 'w:mex', type: 'get' },
+              content: [{ tag: 'query', attrs: {}, content: [{ tag: 'list_type', attrs: { v: '2' } }] }]
+            });
+            if (result && result.content) {
+              newsletters = result.content.map(c => ({
+                id: c.attrs?.id || c.attrs?.jid,
+                name: c.attrs?.name || c.attrs?.subject || 'WhatsApp Channel'
+              })).filter(n => n.id);
+            }
+          } catch (queryErr) {
+            logger.debug(`Newsletter raw query method not available: ${queryErr.message}`);
+          }
+        }
+
+        if (newsletters && Array.isArray(newsletters) && newsletters.length > 0) {
           let newsletterCount = 0;
           newsletters.forEach(n => {
-            if (n && n.id) {
-              const id = n.id.toLowerCase();
-              const name = n.name || 'WhatsApp Channel';
+            if (n && (n.id || n.jid)) {
+              const id = (n.id || n.jid).toLowerCase();
+              const name = n.name || n.subject || 'WhatsApp Channel';
               this.chatNameMap[id] = name;
               newsletterCount++;
             }
           });
           this._saveChatNameMap();
           logger.info(`✅ Synced ${newsletterCount} subscribed newsletters/channels from account.`);
+        } else {
+          logger.info('ℹ️ No newsletters returned from API. Newsletters may still appear via passive history sync (chats.set/chats.upsert).');
         }
       } catch (newsErr) {
-        logger.warn(`Could not sync WhatsApp newsletters: ${newsErr.message}`);
+        logger.warn(`Could not sync WhatsApp newsletters: ${newsErr.message}. Relying on passive history sync.`);
       }
 
       // Seeding latest messages of target groups that are quiet in the local DB

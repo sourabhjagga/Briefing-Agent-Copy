@@ -1,17 +1,17 @@
 /**
  * Scheduler Module
  * Runs scheduled briefings at 6:00 AM, 2:00 PM, and 10:00 PM IST (Asia/Kolkata timezone).
- * Staggers CC and Deals briefs by 30 seconds to avoid AI API quota conflicts.
+ * Dynamically iterates over ALL active categories from the database,
+ * staggering each category's brief by 30 seconds to avoid AI API quota conflicts.
  */
 
 const cron = require('node-cron');
 const logger = require('./logger');
 
 class Scheduler {
-  constructor(summarizer, telegramCC, telegramDeals, database) {
+  constructor(summarizer, botInstances, database) {
     this.summarizer = summarizer;
-    this.telegramCC = telegramCC;
-    this.telegramDeals = telegramDeals;
+    this.botInstances = botInstances; // Map<slug, TelegramBotDispatcher>
     this.database = database;
     this.jobs = [];
   }
@@ -24,20 +24,9 @@ class Scheduler {
     ];
 
     schedules.forEach(s => {
-      // Schedule the briefing job
       const job = cron.schedule(s.time, async () => {
         logger.info(`📅 Scheduled ${s.label} briefing job triggered.`);
-        
-        // 1. Run Credit Cards Summary immediately
-        await this._runSummaryJob('cc', this.telegramCC);
-        
-        // 2. Stagger Deals Summary by 30 seconds to prevent concurrent model quota collisions
-        if (this.telegramDeals) {
-          logger.info('⏳ Staggering Deals briefing job by 30 seconds...');
-          setTimeout(async () => {
-            await this._runSummaryJob('deals', this.telegramDeals);
-          }, 30000);
-        }
+        await this._runAllCategoryBriefs();
       }, {
         timezone: 'Asia/Kolkata',
       });
@@ -47,7 +36,7 @@ class Scheduler {
 
     logger.info('📅 Briefing schedules armed: 6:00 AM, 2:00 PM, and 10:00 PM IST.');
 
-    // 3. Schedule daily database cleanup at 3:00 AM IST to purge messages older than 30 days
+    // Schedule daily database cleanup at 3:00 AM IST to purge messages older than 30 days
     const cleanupJob = cron.schedule('0 3 * * *', () => {
       logger.info('🧹 Running daily SQLite database cleanup...');
       this.database.cleanup();
@@ -57,7 +46,33 @@ class Scheduler {
     this.jobs.push(cleanupJob);
   }
 
-  async _runSummaryJob(sourcePrefix, telegramInstance) {
+  /**
+   * Iterates over all active categories from the DB and runs a briefing for each.
+   * Staggered by 30 seconds between categories to avoid concurrent API quota collisions.
+   */
+  async _runAllCategoryBriefs() {
+    const categories = this.database.getActiveCategories();
+    logger.info(`📂 Running briefs for ${categories.length} active categories...`);
+
+    for (let i = 0; i < categories.length; i++) {
+      const cat = categories[i];
+      const botInstance = this.botInstances.get(cat.slug);
+
+      if (!botInstance) {
+        logger.warn(`⚠️ No bot instance found for category "${cat.slug}". Skipping.`);
+        continue;
+      }
+
+      if (i > 0) {
+        logger.info(`⏳ Staggering "${cat.display_name}" briefing by 30 seconds...`);
+        await new Promise(r => setTimeout(r, 30000));
+      }
+
+      await this._runSummaryJob(cat.slug, botInstance, cat.ai_prompt);
+    }
+  }
+
+  async _runSummaryJob(sourcePrefix, telegramInstance, customPrompt = undefined) {
     logger.info(`=== STARTING ${sourcePrefix.toUpperCase()} BRIEFING GENERATION ===`);
     const today = new Date().toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata' });
 
@@ -73,11 +88,6 @@ class Scheduler {
 
       const groups = this.database.getTodayActiveGroups(sourcePrefix);
       logger.info(`[${sourcePrefix}] Active groups: ${groups.map(g => `${g.group_name}(${g.count})`).join(', ')}`);
-
-      let customPrompt = undefined;
-      if (sourcePrefix === 'deals') {
-        customPrompt = "You are a shopping deals expert. Summarize the best deals from the provided messages. Mention the product, the deal price or discount, and any links. Organize it by categories (e.g., Electronics, Fashion, Travel). Keep it exciting and brief!";
-      }
 
       const summary = await this.summarizer.generateSummary(messages, customPrompt);
 
@@ -109,13 +119,15 @@ class Scheduler {
 
   async triggerNow() {
     logger.info('⚡ Manual summary trigger requested across all profiles.');
-    await this._runSummaryJob('cc', this.telegramCC);
-    if (this.telegramDeals) {
-      // Stagger deals trigger also by 30 seconds
-      setTimeout(async () => {
-        await this._runSummaryJob('deals', this.telegramDeals);
-      }, 30000);
-    }
+    await this._runAllCategoryBriefs();
+  }
+
+  /**
+   * Update bot instances map at runtime (e.g., when a category is added/removed via dashboard).
+   */
+  updateBotInstances(newBotInstances) {
+    this.botInstances = newBotInstances;
+    logger.info(`🔄 Scheduler bot instances updated. Active: ${Array.from(this.botInstances.keys()).join(', ')}`);
   }
 
   stop() {

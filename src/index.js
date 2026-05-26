@@ -2,10 +2,12 @@
  * CC & Deals Briefing Agent — Main Entry Point
  * 
  * 1. Initializes the optimized pre-compiled database layer.
- * 2. Starts pure socket-based WhatsApp and Telegram listeners in background.
- * 3. Schedules daily briefings staggered by 30 seconds.
- * 4. Runs Express server exposing source CRUD, OTP, and session cookies APIs.
- * 5. Handles graceful shutdowns under Coolify and Docker containers.
+ * 2. Seeds default CC & Deals categories and loads all custom categories.
+ * 3. Creates Telegram bot instances for each active category.
+ * 4. Starts pure socket-based WhatsApp and Telegram listeners in background.
+ * 5. Schedules daily briefings staggered by 30 seconds per category.
+ * 6. Runs Express server exposing source CRUD, category CRUD, OTP, and session cookies APIs.
+ * 7. Handles graceful shutdowns under Coolify and Docker containers.
  */
 
 require('dotenv').config();
@@ -37,8 +39,41 @@ function validateConfig() {
   }
 }
 
+// ─── Dynamic Bot Instance Factory ──────────────────────────────────────────
+function createBotInstances(database, summarizer) {
+  const categories = database.getActiveCategories();
+  const botInstances = new Map();
+
+  for (const cat of categories) {
+    const token = cat.bot_token;
+    const chatId = cat.chat_id;
+
+    if (!token || !chatId) {
+      logger.warn(`⚠️ Category "${cat.display_name}" (${cat.slug}) is missing bot_token or chat_id. Skipping bot creation.`);
+      continue;
+    }
+
+    try {
+      const bot = new TelegramBotDispatcher(
+        token,
+        chatId,
+        database,
+        summarizer,
+        cat.slug,
+        cat.ai_prompt || undefined
+      );
+      botInstances.set(cat.slug, bot);
+      logger.info(`🤖 Created bot instance for category: ${cat.display_name} (${cat.slug})`);
+    } catch (err) {
+      logger.error(`Failed to create bot for category "${cat.slug}": ${err.message}`);
+    }
+  }
+
+  return botInstances;
+}
+
 // ─── Dashboard & API Express Server ──────────────────────────────────────────
-function startDashboardServer(database, whatsapp, telegramUser, scheduler) {
+function startDashboardServer(database, whatsapp, telegramUser, scheduler, summarizer, botInstances) {
   const PORT = parseInt(process.env.HEALTH_PORT || '3000', 10);
   const app = express();
   
@@ -58,7 +93,7 @@ function startDashboardServer(database, whatsapp, telegramUser, scheduler) {
     });
   });
 
-  // API Routes for Sources
+  // ─── Sources CRUD ────────────────────────────────────────────────────────
   app.get('/api/sources', (req, res) => {
     try {
       const sources = database.getAllSources();
@@ -98,7 +133,160 @@ function startDashboardServer(database, whatsapp, telegramUser, scheduler) {
     }
   });
 
-  // Telegram User Auth APIs
+  // ─── Categories CRUD ─────────────────────────────────────────────────────
+  app.get('/api/categories', (req, res) => {
+    try {
+      const categories = database.getAllCategories();
+      res.json(categories);
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post('/api/categories', async (req, res) => {
+    try {
+      const { slug, display_name, bot_token, chat_id, ai_prompt } = req.body;
+      if (!slug || !display_name) {
+        return res.status(400).json({ error: 'Missing slug or display_name' });
+      }
+      // Validate slug: lowercase, alphanumeric + hyphens only
+      if (!/^[a-z0-9-]+$/.test(slug)) {
+        return res.status(400).json({ error: 'Slug must be lowercase letters, numbers, and hyphens only' });
+      }
+      database.addCategory(slug, display_name, bot_token, chat_id, ai_prompt);
+      
+      // Hot-reload: create bot instance if token+chatId provided
+      if (bot_token && chat_id) {
+        try {
+          const newBot = new TelegramBotDispatcher(
+            bot_token,
+            chat_id,
+            database,
+            summarizer,
+            slug,
+            ai_prompt || undefined
+          );
+          botInstances.set(slug, newBot);
+          await newBot.start();
+          scheduler.updateBotInstances(botInstances);
+          logger.info(`🔄 Hot-loaded new bot instance for category: ${slug}`);
+        } catch (botErr) {
+          logger.error(`Bot creation failed for new category "${slug}": ${botErr.message}`);
+        }
+      }
+
+      res.json({ success: true });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.patch('/api/categories/:id', async (req, res) => {
+    try {
+      const { display_name, bot_token, chat_id, ai_prompt, is_active } = req.body;
+      if (!display_name) return res.status(400).json({ error: 'Missing display_name' });
+      database.updateCategory(req.params.id, display_name, bot_token, chat_id, ai_prompt, is_active !== undefined ? is_active : 1);
+
+      // Hot-reload: recreate bot instances
+      const updatedCat = database.getAllCategories().find(c => c.id === parseInt(req.params.id));
+      if (updatedCat && bot_token && chat_id) {
+        try {
+          // Stop old bot if exists
+          const oldBot = botInstances.get(updatedCat.slug);
+          if (oldBot) {
+            await oldBot.stop();
+            botInstances.delete(updatedCat.slug);
+          }
+          // Create new bot
+          const newBot = new TelegramBotDispatcher(
+            bot_token,
+            chat_id,
+            database,
+            summarizer,
+            updatedCat.slug,
+            ai_prompt || undefined
+          );
+          botInstances.set(updatedCat.slug, newBot);
+          await newBot.start();
+          scheduler.updateBotInstances(botInstances);
+          logger.info(`🔄 Hot-reloaded bot instance for category: ${updatedCat.slug}`);
+        } catch (botErr) {
+          logger.error(`Bot hot-reload failed for category "${updatedCat.slug}": ${botErr.message}`);
+        }
+      }
+
+      res.json({ success: true });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.delete('/api/categories/:id', async (req, res) => {
+    try {
+      // Find category before deletion to clean up bot
+      const allCats = database.getAllCategories();
+      const cat = allCats.find(c => c.id === parseInt(req.params.id));
+      
+      if (cat && (cat.slug === 'cc' || cat.slug === 'deals')) {
+        return res.status(400).json({ error: 'Cannot delete built-in CC or Deals categories' });
+      }
+
+      const result = database.deleteCategory(req.params.id);
+      
+      // Clean up bot instance
+      if (cat && botInstances.has(cat.slug)) {
+        try {
+          await botInstances.get(cat.slug).stop();
+        } catch (e) { /* ignore */ }
+        botInstances.delete(cat.slug);
+        scheduler.updateBotInstances(botInstances);
+      }
+
+      // Also delete all sources associated with this category
+      if (cat) {
+        const catSources = database.getSourcesByCategory(cat.slug);
+        catSources.forEach(s => database.deleteSource(s.id));
+      }
+
+      res.json({ success: true });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post('/api/categories/:id/test', async (req, res) => {
+    try {
+      const cat = database.getAllCategories().find(c => c.id === parseInt(req.params.id));
+      if (!cat) return res.status(404).json({ error: 'Category not found' });
+      if (!cat.bot_token || !cat.chat_id) {
+        return res.status(400).json({ error: 'Category must have a bot token and chat ID configured' });
+      }
+
+      // Try sending a test message via the bot
+      const { Telegraf } = require('telegraf');
+      const testBot = new Telegraf(cat.bot_token);
+      await testBot.telegram.sendMessage(cat.chat_id, 
+        `🧪 <b>Test Message</b>\n\n✅ Category "${cat.display_name}" is configured correctly!\nBot token and Chat ID verified successfully.`,
+        { parse_mode: 'HTML' }
+      );
+
+      res.json({ success: true, message: 'Test message sent successfully!' });
+    } catch (err) {
+      res.status(500).json({ error: `Test failed: ${err.message}` });
+    }
+  });
+
+  app.patch('/api/categories/:id/toggle', (req, res) => {
+    try {
+      const { is_active } = req.body;
+      database.toggleCategory(req.params.id, is_active);
+      res.json({ success: true });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // ─── Telegram User Auth APIs ──────────────────────────────────────────────
   app.get('/api/telegram/status', (req, res) => {
     res.json({
       isReady: telegramUser.isReady,
@@ -157,7 +345,7 @@ function startDashboardServer(database, whatsapp, telegramUser, scheduler) {
     }
   });
 
-  // Session Cookies Manager APIs
+  // ─── Session Cookies Manager APIs ─────────────────────────────────────────
   app.get('/api/cookies/status', (req, res) => {
     const desidimePath = path.resolve(__dirname, '../data/desidime_cookies.json');
     const redditPath = path.resolve(__dirname, '../data/reddit_cookies.json');
@@ -233,55 +421,49 @@ async function main() {
   // 1. Initialize persistent pre-compiled database layer
   const database = new MessageDatabase();
 
-  // 2. Initialize unified fallback summarization engine
-  const summarizer = new Summarizer(process.env.GEMINI_API_KEY, process.env.OPENROUTER_API_KEY);
-
-  // 3. Initialize Telegram bots
-  const telegramCC = new TelegramBotDispatcher(
+  // 2. Seed default CC and Deals categories from env vars
+  database.seedDefaultCategories(
     process.env.TELEGRAM_BOT_TOKEN,
     process.env.TELEGRAM_CHAT_ID,
-    database,
-    summarizer,
-    'cc'
+    process.env.DEALS_BOT_TOKEN || null,
+    process.env.TELEGRAM_CHAT_ID
   );
 
-  let telegramDeals = null;
-  if (process.env.DEALS_BOT_TOKEN) {
-    telegramDeals = new TelegramBotDispatcher(
-      process.env.DEALS_BOT_TOKEN,
-      process.env.TELEGRAM_CHAT_ID,
-      database,
-      summarizer,
-      'deals',
-      'You are a shopping deals expert. Summarize the best deals from the provided messages. Mention the product, the deal price or discount, and any links. Organize it by categories (e.g., Electronics, Fashion, Travel). Keep it exciting and brief!'
-    );
-  }
+  // 3. Initialize unified fallback summarization engine
+  const summarizer = new Summarizer(process.env.GEMINI_API_KEY, process.env.OPENROUTER_API_KEY);
 
-  // 4. Initialize active ingestion observers
+  // 4. Create bot instances for ALL active categories
+  const botInstances = createBotInstances(database, summarizer);
+
+  // 5. Initialize active ingestion observers
   const whatsapp = new WhatsAppListener(database);
   const telegramUser = new TelegramUserListener(database);
-  const scheduler = new Scheduler(summarizer, telegramCC, telegramDeals, database);
+  const scheduler = new Scheduler(summarizer, botInstances, database);
 
-  // 5. Initialize lightweight scrapers (Puppeteer-free)
+  // 6. Initialize lightweight scrapers (Puppeteer-free)
+  const ccBot = botInstances.get('cc');
   const forumScraper = new ForumScraper(database);
   const dealsScraper = new DealsScraper(database);
-  const redditScraper = new RedditScraper(database, telegramCC);
+  const redditScraper = new RedditScraper(database, ccBot);
   const youtubeScraper = new YoutubeScraper(database, summarizer);
 
-  // 6. Start Express server immediately to let Coolify healthchecks pass
-  const healthServer = startDashboardServer(database, whatsapp, telegramUser, scheduler);
+  // 7. Start Express server immediately to let Coolify healthchecks pass
+  const healthServer = startDashboardServer(database, whatsapp, telegramUser, scheduler, summarizer, botInstances);
 
-  // 7. Verify Telegram connection before startup
-  const telegramCCConnected = await telegramCC.start();
-  if (!telegramCCConnected) {
-    logger.error('Cannot connect to Main Telegram Bot. Verify your TELEGRAM_BOT_TOKEN.');
-    process.exit(1);
-  }
-  if (telegramDeals) {
-    await telegramDeals.start();
+  // 8. Start all bot instances
+  for (const [slug, bot] of botInstances) {
+    const connected = await bot.start();
+    if (!connected) {
+      logger.warn(`⚠️ Telegram Bot for category "${slug}" failed to connect.`);
+      // Only exit for the primary CC bot
+      if (slug === 'cc') {
+        logger.error('Cannot connect to Main CC Telegram Bot. Verify your TELEGRAM_BOT_TOKEN.');
+        process.exit(1);
+      }
+    }
   }
 
-  // 8. Bootstrap background listeners and schedules (non-blocking)
+  // 9. Bootstrap background listeners and schedules (non-blocking)
   whatsapp.start().catch(err => logger.error(`WhatsApp listener failed: ${err.message}`));
   telegramUser.start().catch(err => logger.error(`Telegram user listener failed: ${err.message}`));
   scheduler.start();
@@ -291,10 +473,19 @@ async function main() {
   redditScraper.start();
   youtubeScraper.start();
 
-  // Send startup notifications
-  await telegramCC.sendStartupNotification();
-  if (telegramDeals) {
-    await telegramDeals.sendMessage('🟢 <b>Deals Brief Agent Started</b>\nAll deals scrapers operational.');
+  // Send startup notifications for all bots
+  for (const [slug, bot] of botInstances) {
+    try {
+      if (slug === 'cc') {
+        await bot.sendStartupNotification();
+      } else {
+        const cat = database.getCategoryBySlug(slug);
+        const displayName = cat ? cat.display_name : slug.toUpperCase();
+        await bot.sendMessage(`🟢 <b>${displayName} Brief Agent Started</b>\nAll scrapers operational.`);
+      }
+    } catch (err) {
+      logger.warn(`Failed to send startup notification for "${slug}": ${err.message}`);
+    }
   }
 
   // Graceful shutdown hooks
@@ -308,8 +499,12 @@ async function main() {
     
     await whatsapp.stop();
     await telegramUser.logout();
-    await telegramCC.stop();
-    if (telegramDeals) await telegramDeals.stop();
+    
+    for (const [slug, bot] of botInstances) {
+      try {
+        await bot.stop();
+      } catch (e) { /* ignore */ }
+    }
 
     database.close();
     healthServer.close();

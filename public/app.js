@@ -2,6 +2,7 @@ const { useState, useEffect } = React;
 
 function App() {
   const [sources, setSources] = useState([]);
+  const [categories, setCategories] = useState([]);
   const [loading, setLoading] = useState(true);
   const [formData, setFormData] = useState({ name: '', source_id: '', type: 'cc-whatsapp' });
 
@@ -27,8 +28,15 @@ function App() {
   const [cookieSite, setCookieSite] = useState('desidime');
   const [cookieMsg, setCookieMsg] = useState({ text: '', type: 'info' });
 
+  // Category management states
+  const [showAddCategory, setShowAddCategory] = useState(false);
+  const [catForm, setCatForm] = useState({ slug: '', display_name: '', bot_token: '', chat_id: '', ai_prompt: '' });
+  const [catMsg, setCatMsg] = useState({ text: '', type: 'info' });
+  const [editingCat, setEditingCat] = useState(null);
+
   useEffect(() => {
     fetchSources();
+    fetchCategories();
     fetchSystemStatus();
     fetchTelegramStatus();
     fetchCookieStatus();
@@ -46,6 +54,18 @@ function App() {
       setLoading(false);
     } catch (err) {
       console.error('Failed to fetch sources', err);
+    }
+  };
+
+  const fetchCategories = async () => {
+    try {
+      const res = await fetch('/api/categories');
+      if (res.ok) {
+        const data = await res.json();
+        setCategories(data);
+      }
+    } catch (err) {
+      console.error('Failed to fetch categories', err);
     }
   };
 
@@ -103,7 +123,7 @@ function App() {
         body: JSON.stringify(formData)
       });
       if (res.ok) {
-        setFormData({ name: '', source_id: '', type: 'cc-whatsapp' });
+        setFormData({ name: '', source_id: '', type: formData.type });
         fetchSources();
       }
     } catch (err) {
@@ -132,6 +152,107 @@ function App() {
     } catch (err) {
       console.error(err);
     }
+  };
+
+  // ─── Category Handlers ───────────────────────────────────────────────────
+  const handleCatInputChange = (e) => {
+    setCatForm({ ...catForm, [e.target.name]: e.target.value });
+  };
+
+  const handleAddCategory = async (e) => {
+    e.preventDefault();
+    setCatMsg({ text: 'Creating category...', type: 'info' });
+    try {
+      const res = await fetch('/api/categories', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(catForm)
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setCatForm({ slug: '', display_name: '', bot_token: '', chat_id: '', ai_prompt: '' });
+        setCatMsg({ text: 'Category created successfully!', type: 'success' });
+        setShowAddCategory(false);
+        fetchCategories();
+      } else {
+        setCatMsg({ text: `Error: ${data.error || 'Failed to create'}`, type: 'error' });
+      }
+    } catch (err) {
+      setCatMsg({ text: err.message, type: 'error' });
+    }
+  };
+
+  const handleUpdateCategory = async (e) => {
+    e.preventDefault();
+    setCatMsg({ text: 'Updating category...', type: 'info' });
+    try {
+      const res = await fetch(`/api/categories/${editingCat.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(catForm)
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setCatMsg({ text: 'Category updated successfully!', type: 'success' });
+        setEditingCat(null);
+        setCatForm({ slug: '', display_name: '', bot_token: '', chat_id: '', ai_prompt: '' });
+        fetchCategories();
+      } else {
+        setCatMsg({ text: `Error: ${data.error || 'Failed to update'}`, type: 'error' });
+      }
+    } catch (err) {
+      setCatMsg({ text: err.message, type: 'error' });
+    }
+  };
+
+  const handleDeleteCategory = async (id) => {
+    if (!confirm('Delete this category? All associated sources will also be removed.')) return;
+    try {
+      const res = await fetch(`/api/categories/${id}`, { method: 'DELETE' });
+      const data = await res.json();
+      if (res.ok) {
+        fetchCategories();
+        fetchSources();
+        setCatMsg({ text: 'Category deleted.', type: 'info' });
+      } else {
+        setCatMsg({ text: `Error: ${data.error}`, type: 'error' });
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const handleTestCategory = async (id) => {
+    setCatMsg({ text: 'Sending test message...', type: 'info' });
+    try {
+      const res = await fetch(`/api/categories/${id}/test`, { method: 'POST' });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setCatMsg({ text: '✅ Test message sent! Check your Telegram.', type: 'success' });
+      } else {
+        setCatMsg({ text: `Error: ${data.error || 'Test failed'}`, type: 'error' });
+      }
+    } catch (err) {
+      setCatMsg({ text: err.message, type: 'error' });
+    }
+  };
+
+  const startEditCategory = (cat) => {
+    setEditingCat(cat);
+    setCatForm({
+      slug: cat.slug,
+      display_name: cat.display_name,
+      bot_token: cat.bot_token || '',
+      chat_id: cat.chat_id || '',
+      ai_prompt: cat.ai_prompt || ''
+    });
+    setShowAddCategory(false);
+  };
+
+  const cancelEditCategory = () => {
+    setEditingCat(null);
+    setCatForm({ slug: '', display_name: '', bot_token: '', chat_id: '', ai_prompt: '' });
+    setCatMsg({ text: '', type: 'info' });
   };
 
   // Telegram userbot auth handlers
@@ -230,11 +351,11 @@ function App() {
     }
   };
 
-  const handleAddDiscoveredSource = async (item, category) => {
+  const handleAddDiscoveredSource = async (item, categorySlug) => {
     const isTg = discoverType === 'telegram';
     const type = isTg 
-      ? `${category}-telegram`
-      : `${category}-whatsapp`;
+      ? `${categorySlug}-telegram`
+      : `${categorySlug}-whatsapp`;
 
     try {
       const res = await fetch('/api/sources', {
@@ -296,6 +417,33 @@ function App() {
     }
   };
 
+  // Build dynamic source type dropdown options from categories
+  const buildTypeOptions = () => {
+    const platforms = [
+      { suffix: 'whatsapp', label: 'WhatsApp Group/Channel' },
+      { suffix: 'telegram', label: 'Telegram Channel' },
+      { suffix: 'reddit', label: 'Reddit Subreddit' },
+      { suffix: 'forum', label: 'Web Forum' },
+      { suffix: 'youtube', label: 'YouTube Channel' }
+    ];
+    const options = [];
+    for (const cat of categories) {
+      for (const p of platforms) {
+        options.push({
+          value: `${cat.slug}-${p.suffix}`,
+          label: `${cat.display_name} (${p.label})`
+        });
+      }
+    }
+    return options;
+  };
+
+  // Get category icon/emoji from slug
+  const getCategoryIcon = (slug) => {
+    const icons = { cc: '💳', deals: '🔥' };
+    return icons[slug] || '📂';
+  };
+
   return (
     <div className="dashboard-container">
       <header className="header">
@@ -318,6 +466,130 @@ function App() {
           </div>
         </div>
       </header>
+
+      {/* SECTION 0: Categories Management Panel */}
+      <div className="panel-card">
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px' }}>
+          <h2>📂 Briefing Categories</h2>
+          <button onClick={() => { setShowAddCategory(!showAddCategory); setEditingCat(null); setCatMsg({ text: '', type: 'info' }); }} className="btn-action">
+            {showAddCategory ? '✕ Cancel' : '➕ Add Custom Category'}
+          </button>
+        </div>
+        <p style={{ marginBottom: '20px' }}>
+          Each category gets its own Telegram bot, AI prompt, and source assignments. Briefs are sent at 6 AM, 2 PM & 10 PM IST.
+        </p>
+
+        {catMsg.text && (
+          <div className={`alert alert-${catMsg.type}`}>
+            {catMsg.text}
+          </div>
+        )}
+
+        {/* Category cards grid */}
+        <div className="source-grid" style={{ marginBottom: showAddCategory || editingCat ? '24px' : '0' }}>
+          {categories.map(cat => (
+            <div className="source-card" key={cat.id} style={{ position: 'relative' }}>
+              <div className="source-type" style={{ fontSize: '0.75em' }}>
+                {cat.bot_token && cat.chat_id ? '🟢 Bot Connected' : '⚠️ No Bot Token'}
+              </div>
+              <h3>{getCategoryIcon(cat.slug)} {cat.display_name}</h3>
+              <div className="source-id">{cat.slug}</div>
+              {cat.ai_prompt && (
+                <div style={{ fontSize: '0.8em', color: 'var(--text-muted)', marginTop: '4px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  🤖 {cat.ai_prompt.substring(0, 60)}...
+                </div>
+              )}
+              <div style={{ fontSize: '0.8em', color: 'var(--text-muted)', marginTop: '4px' }}>
+                📊 {sources.filter(s => s.type.startsWith(cat.slug + '-')).length} sources
+              </div>
+
+              <div className="card-actions">
+                <button onClick={() => startEditCategory(cat)} style={{ background: 'none', border: '1px solid var(--glass-border)', color: 'var(--text-muted)', cursor: 'pointer', padding: '6px 12px', borderRadius: '8px', fontSize: '0.85em' }}>
+                  ✏️ Edit
+                </button>
+                {cat.bot_token && cat.chat_id && (
+                  <button onClick={() => handleTestCategory(cat.id)} style={{ background: 'none', border: '1px solid rgba(16,185,129,0.3)', color: 'var(--success)', cursor: 'pointer', padding: '6px 12px', borderRadius: '8px', fontSize: '0.85em' }}>
+                    🔔 Test
+                  </button>
+                )}
+                {cat.slug !== 'cc' && cat.slug !== 'deals' && (
+                  <button className="btn-delete" onClick={() => handleDeleteCategory(cat.id)}>Delete</button>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {/* Add new category form */}
+        {showAddCategory && (
+          <form onSubmit={handleAddCategory} style={{ display: 'flex', flexDirection: 'column', gap: '14px', background: 'rgba(255,255,255,0.02)', border: '1px solid var(--glass-border)', borderRadius: '16px', padding: '24px' }}>
+            <h3 style={{ margin: 0, fontSize: '1.1em' }}>➕ Create New Category</h3>
+            <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
+              <div className="input-group" style={{ flex: 1, minWidth: '180px' }}>
+                <label>Slug (ID)</label>
+                <input type="text" name="slug" value={catForm.slug} onChange={handleCatInputChange} placeholder="e.g. office, crypto" required pattern="[a-z0-9-]+" title="Lowercase letters, numbers, and hyphens only" />
+              </div>
+              <div className="input-group" style={{ flex: 1, minWidth: '220px' }}>
+                <label>Display Name</label>
+                <input type="text" name="display_name" value={catForm.display_name} onChange={handleCatInputChange} placeholder="e.g. Office Updates" required />
+              </div>
+            </div>
+            <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
+              <div className="input-group" style={{ flex: 1, minWidth: '280px' }}>
+                <label>Telegram Bot Token</label>
+                <input type="text" name="bot_token" value={catForm.bot_token} onChange={handleCatInputChange} placeholder="Paste bot token from @BotFather" />
+              </div>
+              <div className="input-group" style={{ flex: 1, minWidth: '180px' }}>
+                <label>Your Telegram Chat ID</label>
+                <input type="text" name="chat_id" value={catForm.chat_id} onChange={handleCatInputChange} placeholder="e.g. 123456789" />
+              </div>
+            </div>
+            <div className="input-group">
+              <label>Custom AI Prompt (optional)</label>
+              <textarea name="ai_prompt" value={catForm.ai_prompt} onChange={handleCatInputChange} rows="2" placeholder="e.g. You are an office communication summarizer. Summarize key decisions, deadlines, and action items..." />
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
+              <button type="button" onClick={() => { setShowAddCategory(false); setCatMsg({ text: '', type: 'info' }); }} className="btn-delete" style={{ height: '46px' }}>Cancel</button>
+              <button type="submit" className="btn-add">Create Category</button>
+            </div>
+          </form>
+        )}
+
+        {/* Edit category form */}
+        {editingCat && (
+          <form onSubmit={handleUpdateCategory} style={{ display: 'flex', flexDirection: 'column', gap: '14px', background: 'rgba(99,102,241,0.04)', border: '1px solid rgba(99,102,241,0.3)', borderRadius: '16px', padding: '24px' }}>
+            <h3 style={{ margin: 0, fontSize: '1.1em' }}>✏️ Edit Category: {editingCat.display_name}</h3>
+            <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
+              <div className="input-group" style={{ flex: 1, minWidth: '180px' }}>
+                <label>Slug (read-only)</label>
+                <input type="text" value={catForm.slug} disabled style={{ opacity: 0.5 }} />
+              </div>
+              <div className="input-group" style={{ flex: 1, minWidth: '220px' }}>
+                <label>Display Name</label>
+                <input type="text" name="display_name" value={catForm.display_name} onChange={handleCatInputChange} required />
+              </div>
+            </div>
+            <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
+              <div className="input-group" style={{ flex: 1, minWidth: '280px' }}>
+                <label>Telegram Bot Token</label>
+                <input type="text" name="bot_token" value={catForm.bot_token} onChange={handleCatInputChange} placeholder="Paste bot token from @BotFather" />
+              </div>
+              <div className="input-group" style={{ flex: 1, minWidth: '180px' }}>
+                <label>Your Telegram Chat ID</label>
+                <input type="text" name="chat_id" value={catForm.chat_id} onChange={handleCatInputChange} placeholder="e.g. 123456789" />
+              </div>
+            </div>
+            <div className="input-group">
+              <label>Custom AI Prompt (optional)</label>
+              <textarea name="ai_prompt" value={catForm.ai_prompt} onChange={handleCatInputChange} rows="2" placeholder="Custom summarization prompt for this category..." />
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
+              <button type="button" onClick={cancelEditCategory} className="btn-delete" style={{ height: '46px' }}>Cancel</button>
+              <button type="submit" className="btn-add">Save Changes</button>
+            </div>
+          </form>
+        )}
+      </div>
 
       {/* SECTION 1: Telegram userbot auth panel */}
       <div className="panel-card">
@@ -453,72 +725,52 @@ function App() {
             <input type="text" name="source_id" value={formData.source_id} onChange={handleInputChange} placeholder="e.g. 1203630xxx@g.us, technofino, @handle" required />
           </div>
           <div className="input-group">
-            <label>Type / Module</label>
+            <label>Category & Platform</label>
             <select name="type" value={formData.type} onChange={handleInputChange}>
-              <option value="cc-whatsapp">Credit Cards (WhatsApp Group/Channel)</option>
-              <option value="cc-telegram">Credit Cards (Telegram Channel)</option>
-              <option value="cc-reddit">Credit Cards (Reddit Subreddit)</option>
-              <option value="cc-forum">Credit Cards (Web Forum)</option>
-              <option value="cc-youtube">Credit Cards (YouTube Channel)</option>
-              <option value="deals-whatsapp">Online Deals (WhatsApp Group/Channel)</option>
-              <option value="deals-telegram">Online Deals (Telegram Channel)</option>
-              <option value="deals-reddit">Online Deals (Reddit Subreddit)</option>
-              <option value="deals-forum">Online Deals (Web Forum)</option>
-              <option value="deals-youtube">Online Deals (YouTube Channel)</option>
+              {buildTypeOptions().map(opt => (
+                <option key={opt.value} value={opt.value}>{opt.label}</option>
+              ))}
             </select>
           </div>
           <button type="submit" className="btn-add">Add Source</button>
         </form>
       </div>
 
-      {/* SECTION 4: Sources list grid */}
+      {/* SECTION 4: Sources list grid — grouped by category */}
       {loading ? (
         <div className="loader"></div>
       ) : (
         <div>
-          <h2 style={{ marginTop: '20px', marginBottom: '20px', fontSize: '1.6rem' }}>💳 Credit Cards Monitored Sources</h2>
-          <div className="source-grid" style={{ marginBottom: '40px' }}>
-            {sources.filter(s => s.type.startsWith('cc-')).map(s => (
-              <div className="source-card" key={s.id}>
-                <div className="source-type">{s.type.replace('cc-', '').replace('-', ' ')}</div>
-                <h3>{s.name}</h3>
-                <div className="source-id">{s.source_id}</div>
-                
-                <div className="card-actions">
-                  <label className="toggle-switch">
-                    <input type="checkbox" checked={s.is_active === 1} onChange={() => toggleSource(s.id, s.is_active)} />
-                    <span className="slider"></span>
-                  </label>
-                  <button className="btn-delete" onClick={() => deleteSource(s.id)}>Delete</button>
+          {categories.map(cat => {
+            const catSources = sources.filter(s => s.type.startsWith(cat.slug + '-'));
+            return (
+              <div key={cat.slug}>
+                <h2 style={{ marginTop: '20px', marginBottom: '20px', fontSize: '1.6rem' }}>
+                  {getCategoryIcon(cat.slug)} {cat.display_name} Monitored Sources
+                </h2>
+                <div className="source-grid" style={{ marginBottom: '40px' }}>
+                  {catSources.map(s => (
+                    <div className="source-card" key={s.id}>
+                      <div className="source-type">{s.type.replace(cat.slug + '-', '').replace('-', ' ')}</div>
+                      <h3>{s.name}</h3>
+                      <div className="source-id">{s.source_id}</div>
+                      
+                      <div className="card-actions">
+                        <label className="toggle-switch">
+                          <input type="checkbox" checked={s.is_active === 1} onChange={() => toggleSource(s.id, s.is_active)} />
+                          <span className="slider"></span>
+                        </label>
+                        <button className="btn-delete" onClick={() => deleteSource(s.id)}>Delete</button>
+                      </div>
+                    </div>
+                  ))}
+                  {catSources.length === 0 && (
+                    <p style={{ color: 'var(--text-muted)', gridColumn: '1/-1' }}>No sources added for {cat.display_name} yet.</p>
+                  )}
                 </div>
               </div>
-            ))}
-            {sources.filter(s => s.type.startsWith('cc-')).length === 0 && (
-              <p style={{ color: 'var(--text-muted)', gridColumn: '1/-1' }}>No credit card sources added yet.</p>
-            )}
-          </div>
-
-          <h2 style={{ marginTop: '20px', marginBottom: '20px', fontSize: '1.6rem' }}>🔥 Shopping Deals Monitored Sources</h2>
-          <div className="source-grid">
-            {sources.filter(s => s.type.startsWith('deals-')).map(s => (
-              <div className="source-card" key={s.id}>
-                <div className="source-type">{s.type.replace('deals-', '').replace('-', ' ')}</div>
-                <h3>{s.name}</h3>
-                <div className="source-id">{s.source_id}</div>
-                
-                <div className="card-actions">
-                  <label className="toggle-switch">
-                    <input type="checkbox" checked={s.is_active === 1} onChange={() => toggleSource(s.id, s.is_active)} />
-                    <span className="slider"></span>
-                  </label>
-                  <button className="btn-delete" onClick={() => deleteSource(s.id)}>Delete</button>
-                </div>
-              </div>
-            ))}
-            {sources.filter(s => s.type.startsWith('deals-')).length === 0 && (
-              <p style={{ color: 'var(--text-muted)', gridColumn: '1/-1' }}>No deals sources added yet.</p>
-            )}
-          </div>
+            );
+          })}
         </div>
       )}
 
@@ -557,7 +809,7 @@ function App() {
                 return (
                   <div>
                     <p style={{ color: 'var(--text-muted)', fontSize: '0.9em', marginBottom: '15px' }}>
-                      Click either button to add a discovered chat directly into the target active monitor grid (seeded as inactive first).
+                      Click a category button to add the chat to that category's monitoring list.
                     </p>
                     {filteredList.map(item => (
                       <div className="modal-list-item" key={item.id}>
@@ -565,21 +817,29 @@ function App() {
                           <span className="modal-list-item-name">{item.name}</span>
                           <span className="modal-list-item-id">{item.id}</span>
                         </div>
-                        <div style={{ display: 'flex', gap: '8px' }}>
-                          <button 
-                            onClick={() => handleAddDiscoveredSource(item, 'cc')} 
-                            className="btn-add" 
-                            style={{ height: '36px', padding: '0 10px', fontSize: '0.82em', background: 'linear-gradient(135deg, var(--primary) 0%, #1e40af 100%)', display: 'flex', alignItems: 'center', gap: '4px' }}
-                          >
-                            💳 CC
-                          </button>
-                          <button 
-                            onClick={() => handleAddDiscoveredSource(item, 'deals')} 
-                            className="btn-add" 
-                            style={{ height: '36px', padding: '0 10px', fontSize: '0.82em', background: 'linear-gradient(135deg, #10b981 0%, #047857 100%)', display: 'flex', alignItems: 'center', gap: '4px' }}
-                          >
-                            🔥 Deals
-                          </button>
+                        <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                          {categories.map(cat => (
+                            <button 
+                              key={cat.slug}
+                              onClick={() => handleAddDiscoveredSource(item, cat.slug)} 
+                              className="btn-add" 
+                              style={{ 
+                                height: '36px', 
+                                padding: '0 10px', 
+                                fontSize: '0.82em', 
+                                background: cat.slug === 'cc' 
+                                  ? 'linear-gradient(135deg, var(--primary) 0%, #1e40af 100%)' 
+                                  : cat.slug === 'deals'
+                                    ? 'linear-gradient(135deg, #10b981 0%, #047857 100%)'
+                                    : 'linear-gradient(135deg, #8b5cf6 0%, #6d28d9 100%)',
+                                display: 'flex', 
+                                alignItems: 'center', 
+                                gap: '4px' 
+                              }}
+                            >
+                              {getCategoryIcon(cat.slug)} {cat.display_name}
+                            </button>
+                          ))}
                         </div>
                       </div>
                     ))}
