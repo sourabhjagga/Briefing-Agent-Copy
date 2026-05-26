@@ -73,7 +73,7 @@ function createBotInstances(database, summarizer) {
 }
 
 // ─── Dashboard & API Express Server ──────────────────────────────────────────
-function startDashboardServer(database, whatsapp, telegramUser, scheduler, summarizer, botInstances) {
+function startDashboardServer(database, whatsapp, telegramUser, scheduler, summarizer, botInstances, scrapers = {}) {
   const PORT = parseInt(process.env.HEALTH_PORT || '3000', 10);
   const app = express();
   
@@ -399,6 +399,17 @@ function startDashboardServer(database, whatsapp, telegramUser, scheduler, summa
       }
 
       logger.info(`🔐 Saved imported cookies for ${site} successfully in DB & file.`);
+
+      // Trigger immediate cookie reload and re-verification scrape
+      if (scrapers && scrapers[site]) {
+        logger.info(`🔄 Forcing immediate cookie reload and verification for: ${site}`);
+        if (site === 'desidime') {
+          scrapers[site].scrapeDesiDime().catch(e => logger.error(`Immediate desidime scrape fail: ${e.message}`));
+        } else {
+          scrapers[site].scrape().catch(e => logger.error(`Immediate ${site} scrape fail: ${e.message}`));
+        }
+      }
+
       res.json({ success: true });
     } catch (err) {
       res.status(500).json({ error: err.message });
@@ -483,7 +494,12 @@ async function main() {
   const youtubeScraper = new YoutubeScraper(database, summarizer);
 
   // 7. Start Express server immediately to let Coolify healthchecks pass
-  const healthServer = startDashboardServer(database, whatsapp, telegramUser, scheduler, summarizer, botInstances);
+  const scrapers = {
+    reddit: redditScraper,
+    technofino: forumScraper,
+    desidime: dealsScraper
+  };
+  const healthServer = startDashboardServer(database, whatsapp, telegramUser, scheduler, summarizer, botInstances, scrapers);
 
   // 8. Start all bot instances
   for (const [slug, bot] of botInstances) {
