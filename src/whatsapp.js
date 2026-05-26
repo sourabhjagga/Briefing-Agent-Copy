@@ -187,14 +187,9 @@ class WhatsAppListener {
           
           logger.warn(`❌ WhatsApp connection closed. Reason: ${errorMessage || 'unknown'} (${errorDetail}). Code: ${statusCode}. Reconnecting: ${shouldReconnect}`);
           
-          if (!this.isSessionAlerted && this.onAlert) {
-            if (!shouldReconnect) {
-              this.onAlert('📱 <b>WhatsApp Session Expired / Logged Out</b>\n\nYour WhatsApp session has been logged out. Please open the Web Dashboard and re-scan the QR code.');
-              this.isSessionAlerted = true;
-            } else {
-              this.onAlert(`⚠️ <b>WhatsApp Connection Closed</b>\n\nReason: ${errorMessage || 'unknown'} (${errorDetail})\nCode: ${statusCode}\nReconnecting: ${shouldReconnect}`);
-              this.isSessionAlerted = true;
-            }
+          if (!this.isSessionAlerted && this.onAlert && !shouldReconnect) {
+            this.onAlert('📱 <b>WhatsApp Session Expired / Logged Out</b>\n\nYour WhatsApp session has been logged out. Please open the Web Dashboard and re-scan the QR code.');
+            this.isSessionAlerted = true;
           }
 
           if (shouldReconnect) {
