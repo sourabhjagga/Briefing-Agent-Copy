@@ -44,16 +44,33 @@ class TelegramUserListener {
 
   async start() {
     logger.info('📱 Initializing personal Telegram account connection...');
+    
+    // Check if a saved session exists. If not, skip startup connect to prevent hanging and let the user log in dynamically
+    const hasSession = fs.existsSync(this.sessionPath) && fs.readFileSync(this.sessionPath, 'utf8').trim().length > 0;
+    if (!hasSession) {
+      logger.warn('⚠️ No Telegram personal session found. Please log in via the Web Dashboard.');
+      return;
+    }
+
     try {
-      await this.client.connect();
-      const isAuthorized = await this.client.isUserAuthorized().catch(() => false);
+      // Connect to Telegram DC with a 20-second hard timeout to avoid blocking the Express API server
+      await Promise.race([
+        this.client.connect(),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('Telegram connection timeout')), 20000))
+      ]);
+      
+      const isAuthorized = await Promise.race([
+        this.client.isUserAuthorized().catch(() => false),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('Telegram auth check timeout')), 10000))
+      ]).catch(() => false);
+
       if (isAuthorized) {
         this.isReady = true;
         logger.info('✅ Personal Telegram account successfully connected (Session loaded)!');
         this.scrapePrivateChannels();
         setInterval(() => this.scrapePrivateChannels(), 10 * 60 * 1000); // Scrape every 10 min
       } else {
-        logger.warn('⚠️ Telegram personal account NOT logged in. Please use the Web Dashboard to log in.');
+        logger.warn('⚠️ Telegram personal account session is expired or invalid. Please log in again.');
       }
     } catch (err) {
       logger.error(`Failed to initialize Telegram User listener: ${err.message}`);
@@ -64,16 +81,27 @@ class TelegramUserListener {
 
   async sendLoginCode(phoneNumber) {
     logger.info(`📡 Requesting Telegram login code for: ${phoneNumber}`);
+    
+    // Connect to Telegram DC with a 20-second timeout if not already connected
     if (!this.client.connected) {
-      await this.client.connect();
+      await Promise.race([
+        this.client.connect(),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('Telegram connection timeout during OTP request')), 20000))
+      ]);
     }
-    const result = await this.client.sendCode(
-      {
-        apiId: this.apiId,
-        apiHash: this.apiHash,
-      },
-      phoneNumber
-    );
+    
+    // Send verification code with a 15-second timeout
+    const result = await Promise.race([
+      this.client.sendCode(
+        {
+          apiId: this.apiId,
+          apiHash: this.apiHash,
+        },
+        phoneNumber
+      ),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('Telegram server took too long to send code')), 15000))
+    ]);
+
     this.tempPhone = phoneNumber;
     this.tempHash = result.phoneCodeHash;
     return this.tempHash;

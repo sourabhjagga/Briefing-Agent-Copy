@@ -144,7 +144,16 @@ function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ phoneNumber: tgPhone })
       });
-      const data = await res.json();
+      
+      let data = {};
+      const contentType = res.headers.get('content-type') || '';
+      if (contentType.includes('application/json')) {
+        data = await res.json();
+      } else {
+        const text = await res.text();
+        throw new Error(`Server returned non-JSON response (${res.status}): ${text.substring(0, 100)}`);
+      }
+
       if (res.ok && data.success) {
         setTgStep(2);
         setTgMsg({ text: 'OTP code successfully sent! Check your Telegram App.', type: 'success' });
@@ -165,7 +174,16 @@ function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ code: tgCode, password: tgPassword })
       });
-      const data = await res.json();
+
+      let data = {};
+      const contentType = res.headers.get('content-type') || '';
+      if (contentType.includes('application/json')) {
+        data = await res.json();
+      } else {
+        const text = await res.text();
+        throw new Error(`Server returned non-JSON response (${res.status}): ${text.substring(0, 100)}`);
+      }
+
       if (res.ok && data.success) {
         setTgStep(3);
         setTgMsg({ text: 'Successfully authenticated and logged into Telegram!', type: 'success' });
