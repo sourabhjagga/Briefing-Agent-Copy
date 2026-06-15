@@ -25,13 +25,14 @@ const Icon = ({ name, size = 18 }) => {
     check:     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="20 6 9 17 4 12"/></svg>,
     bolt:      <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>,
     menu:      <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/></svg>,
+    test:      <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>,
   };
   return icons[name] || null;
 };
 
 // ---- HELPERS ---- //
 const api = {
-  get: (url) => fetch(url).then(r => r.json()),
+  get: (url) => fetch(url).then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); }),
   post: (url, body) => fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).then(r => r.json()),
   delete: (url) => fetch(url, { method: 'DELETE' }).then(r => r.json()),
   patch: (url, body) => fetch(url, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).then(r => r.json()),
@@ -177,9 +178,9 @@ const WEEKDAYS = [{l:'S',v:'0'},{l:'M',v:'1'},{l:'T',v:'2'},{l:'W',v:'3'},{l:'T'
 
 function AddRuleModal({ categorySlug, categoryName, onClose, onSaved }) {
   const [label, setLabel] = useState('');
-  const [mode, setMode] = useState('preset'); // 'preset' | 'custom'
+  const [mode, setMode] = useState('preset');
   const [selectedTime, setSelectedTime] = useState(null);
-  const [selectedDays, setSelectedDays] = useState([]); // [] = every day
+  const [selectedDays, setSelectedDays] = useState([]);
   const [customCron, setCustomCron] = useState('0 9 * * *');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -294,15 +295,18 @@ function SchedulePage({ categories, scheduler }) {
   };
 
   const toggleRule = async (id, current) => {
+    // FIX #1 (toggle): send only is_active — backend now handles partial PATCH
     await api.patch(`/api/schedules/${id}`, { is_active: !current });
     loadRules();
   };
 
+  // FIX #1: was /api/trigger — now correctly calls /api/schedules/trigger
   const triggerNow = async (slug) => {
     setTriggering(slug);
     try {
-      await api.post('/api/trigger', { slug });
-      setAlert({ type: 'success', msg: `Brief triggered for ${slug}. Check Telegram!` });
+      const res = await api.post('/api/schedules/trigger', { slug });
+      if (res.error) throw new Error(res.error);
+      setAlert({ type: 'success', msg: `⚡ Brief triggered for ${slug}. Check Telegram in ~30s!` });
     } catch(e) { setAlert({ type: 'error', msg: e.message }); }
     finally { setTimeout(() => setTriggering(null), 3000); }
   };
@@ -366,7 +370,31 @@ function SchedulePage({ categories, scheduler }) {
 }
 
 // ---- SOURCES PAGE ---- //
-function SourcesPage({ sources, onReload }) {
+// FIX #2: source types are now generated dynamically from categories
+function buildSourceTypes(categories) {
+  const PLATFORM_SUFFIXES = ['whatsapp', 'telegram', 'reddit', 'youtube', 'forum'];
+  const types = [];
+  for (const cat of categories) {
+    for (const suffix of PLATFORM_SUFFIXES) {
+      types.push(`${cat.slug}-${suffix}`);
+    }
+  }
+  return types;
+}
+
+const TYPE_BADGE_MAP = {
+  whatsapp: 'badge-green',
+  telegram: 'badge-blue',
+  reddit:   'badge-red',
+  youtube:  'badge-accent',
+  forum:    'badge-yellow',
+};
+function typeBadgeClass(type) {
+  const suffix = type ? type.split('-').pop() : '';
+  return TYPE_BADGE_MAP[suffix] || 'badge-gray';
+}
+
+function SourcesPage({ sources, categories, onReload }) {
   const [filter, setFilter] = useState('');
   const [typeFilter, setTypeFilter] = useState('all');
   const [alert, setAlert] = useState(null);
@@ -374,7 +402,13 @@ function SourcesPage({ sources, onReload }) {
   const [newSource, setNewSource] = useState({ name: '', source_id: '', type: '' });
   const [saving, setSaving] = useState(false);
 
-  const types = ['all', ...Array.from(new Set(sources.map(s => s.type)))];
+  // FIX #2: build types dynamically from all categories
+  const dynamicTypes = buildSourceTypes(categories);
+  const existingTypes = Array.from(new Set(sources.map(s => s.type)));
+  // merge and deduplicate: show all dynamic types + any existing types not covered
+  const allTypeOptions = Array.from(new Set([...dynamicTypes, ...existingTypes]));
+
+  const filterTypes = ['all', ...Array.from(new Set(sources.map(s => s.type)))];
   const filtered = sources.filter(s => {
     const matchText = filter === '' || s.name.toLowerCase().includes(filter.toLowerCase()) || s.source_id.toLowerCase().includes(filter.toLowerCase());
     const matchType = typeFilter === 'all' || s.type === typeFilter;
@@ -409,8 +443,6 @@ function SourcesPage({ sources, onReload }) {
     finally { setSaving(false); }
   };
 
-  const typeColorMap = { 'cc-whatsapp': 'badge-green', 'cc-telegram': 'badge-blue', 'deals-whatsapp': 'badge-accent', 'deals-telegram': 'badge-yellow', 'cc-reddit': 'badge-red', 'deals-reddit': 'badge-red' };
-
   return (
     <div>
       {alert && <Alert type={alert.type} onClose={() => setAlert(null)}>{alert.msg}</Alert>}
@@ -428,15 +460,10 @@ function SourcesPage({ sources, onReload }) {
                 <label className="form-label">Type</label>
                 <select className="form-select" value={newSource.type} onChange={e => setNewSource(p => ({...p, type: e.target.value}))}>
                   <option value="">Select type...</option>
-                  <option value="cc-whatsapp">cc-whatsapp</option>
-                  <option value="cc-telegram">cc-telegram</option>
-                  <option value="cc-reddit">cc-reddit</option>
-                  <option value="deals-whatsapp">deals-whatsapp</option>
-                  <option value="deals-telegram">deals-telegram</option>
-                  <option value="deals-reddit">deals-reddit</option>
-                  <option value="cc-youtube">cc-youtube</option>
-                  <option value="deals-youtube">deals-youtube</option>
+                  {/* FIX #2: dynamically generated from categories */}
+                  {allTypeOptions.map(t => <option key={t} value={t}>{t}</option>)}
                 </select>
+                <div className="form-hint">Format: {'{category-slug}'}-{'{platform}'} &nbsp;·&nbsp; Platforms: whatsapp, telegram, reddit, youtube, forum</div>
               </div>
             </div>
             <div className="modal-footer">
@@ -449,7 +476,7 @@ function SourcesPage({ sources, onReload }) {
       <div style={{display:'flex',gap:'var(--sp-3)',marginBottom:'var(--sp-5)',flexWrap:'wrap'}}>
         <input className="form-input" style={{maxWidth:260}} placeholder="Search sources..." value={filter} onChange={e => setFilter(e.target.value)}/>
         <select className="form-select" style={{maxWidth:200}} value={typeFilter} onChange={e => setTypeFilter(e.target.value)}>
-          {types.map(t => <option key={t} value={t}>{t === 'all' ? 'All Types' : t}</option>)}
+          {filterTypes.map(t => <option key={t} value={t}>{t === 'all' ? 'All Types' : t}</option>)}
         </select>
         <button className="btn btn-primary" style={{marginLeft:'auto'}} onClick={() => setShowAddModal(true)}><Icon name="plus" size={16}/>Add Source</button>
       </div>
@@ -466,7 +493,7 @@ function SourcesPage({ sources, onReload }) {
                 <tr key={s.id}>
                   <td style={{fontWeight:500}}>{s.name}</td>
                   <td className="td-mono truncate">{s.source_id}</td>
-                  <td><span className={`badge ${typeColorMap[s.type] || 'badge-gray'}`}>{s.type}</span></td>
+                  <td><span className={`badge ${typeBadgeClass(s.type)}`}>{s.type}</span></td>
                   <td><Toggle checked={!!s.is_active} onChange={() => toggle(s.id, !!s.is_active)}/></td>
                   <td><button className="btn btn-danger btn-icon btn-sm" onClick={() => remove(s.id)} title="Remove"><Icon name="trash" size={14}/></button></td>
                 </tr>
@@ -480,6 +507,7 @@ function SourcesPage({ sources, onReload }) {
 }
 
 // ---- COOKIES PAGE ---- //
+// FIX #4: added Reddit to SITES, updated API paths to /api/cookies
 function CookiesPage() {
   const [cookies, setCookies] = useState({});
   const [loading, setLoading] = useState(true);
@@ -487,18 +515,20 @@ function CookiesPage() {
   const [dragOver, setDragOver] = useState(null);
 
   const SITES = [
-    { key: 'youtube',     label: 'YouTube', icon: '🎥', hint: 'Export cookies from browser with EditThisCookie or Get cookies.txt extension.' },
-    { key: 'technofino',  label: 'Technofino', icon: '🌐', hint: 'Login to technofino.com, then export cookies.' },
-    { key: 'desidime',    label: 'DesiDime', icon: '🛡️', hint: 'Export cookies if DesiDime requires login for VIP sections.' },
+    { key: 'youtube',     label: 'YouTube',     icon: '🎥', hint: 'Export with EditThisCookie or Get cookies.txt extension. Required to bypass yt-dlp bot detection.' },
+    { key: 'reddit',      label: 'Reddit',      icon: '🤖', hint: 'Export cookies from reddit.com after login. Helps access Reddit API as a logged-in user.' },
+    { key: 'technofino',  label: 'Technofino',  icon: '🌐', hint: 'Login to technofino.com, then export cookies to unlock VIP Lounge and CC Hub threads.' },
+    { key: 'desidime',    label: 'DesiDime',    icon: '🛡️', hint: 'Export cookies if DesiDime requires login for VIP sections.' },
   ];
 
   const loadCookies = async () => {
     try {
+      // FIX #4: call /api/cookies (new unified endpoint)
       const data = await api.get('/api/cookies');
       const map = {};
       for (const item of data) map[item.site] = item;
       setCookies(map);
-    } catch(e) { console.error(e); }
+    } catch(e) { console.error('Failed to load cookies', e); }
     finally { setLoading(false); }
   };
 
@@ -511,15 +541,17 @@ function CookiesPage() {
       let parsed;
       try { parsed = JSON.parse(text); }
       catch (e) {
-        // Try Netscape cookie format (txt)
+        // Netscape cookie format (.txt)
         parsed = text.split('\n')
           .filter(l => !l.startsWith('#') && l.trim())
           .map(line => {
-            const [domain,,,path,expires,name,value] = line.split('\t');
+            const parts = line.split('\t');
+            const [domain,,, path, expires, name, value] = parts;
             return { domain, path, name, value, expires: parseInt(expires) };
           }).filter(c => c.name);
       }
       if (!Array.isArray(parsed) || parsed.length === 0) throw new Error('No valid cookies found in file.');
+      // FIX #4: POST to /api/cookies
       const res = await api.post('/api/cookies', { site, cookies: parsed });
       if (res.error) throw new Error(res.error);
       setAlert({ type: 'success', msg: `✅ ${parsed.length} cookies saved for ${site}!` });
@@ -529,6 +561,7 @@ function CookiesPage() {
 
   const deleteCookies = async (site) => {
     if (!confirm(`Delete cookies for ${site}?`)) return;
+    // FIX #4: DELETE /api/cookies/:site
     await api.delete(`/api/cookies/${site}`);
     setAlert({ type: 'success', msg: `Cookies cleared for ${site}.` });
     loadCookies();
@@ -545,12 +578,12 @@ function CookiesPage() {
             <div className="card-header">
               <span style={{fontSize:'1.25rem'}}>{site.icon}</span>
               <span className="card-title">{site.label}</span>
-              {cookies[site.key] && (
+              {cookies[site.key] && cookies[site.key].has_cookies && (
                 <span className="badge badge-green" style={{marginLeft:'auto'}}>Loaded</span>
               )}
             </div>
             <div className="card-body">
-              {cookies[site.key] && (
+              {cookies[site.key] && cookies[site.key].has_cookies && cookies[site.key].updated_at && (
                 <div style={{marginBottom:'var(--sp-3)',fontSize:'var(--text-xs)',color:'var(--text-muted)',fontFamily:'var(--font-mono)'}}>
                   Updated: {new Date(cookies[site.key].updated_at).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}
                 </div>
@@ -566,7 +599,7 @@ function CookiesPage() {
                 <div className="cookie-drop-zone-text">Drop cookie file or click to browse</div>
                 <div className="cookie-drop-zone-sub">{site.hint}</div>
               </label>
-              {cookies[site.key] && (
+              {cookies[site.key] && cookies[site.key].has_cookies && (
                 <button className="btn btn-danger btn-sm" style={{marginTop:'var(--sp-3)',width:'100%'}} onClick={() => deleteCookies(site.key)}>
                   <Icon name="trash" size={14}/>Clear Cookies
                 </button>
@@ -580,14 +613,97 @@ function CookiesPage() {
 }
 
 // ---- CATEGORIES PAGE ---- //
+// FIX #3: added AddCategoryModal and "Add Category" button
+function AddCategoryModal({ onClose, onSaved }) {
+  const [form, setForm] = useState({ slug: '', display_name: '', bot_token: '', chat_id: '', ai_prompt: '' });
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+
+  const set = (k, v) => setForm(p => ({ ...p, [k]: v }));
+
+  const handleSave = async () => {
+    if (!form.slug || !form.display_name) { setError('Slug and Display Name are required.'); return; }
+    if (!/^[a-z0-9-]+$/.test(form.slug)) { setError('Slug must be lowercase letters, numbers, and hyphens only.'); return; }
+    setSaving(true); setError('');
+    try {
+      const res = await api.post('/api/categories', form);
+      if (res.error) throw new Error(res.error);
+      onSaved();
+    } catch (e) { setError(e.message); }
+    finally { setSaving(false); }
+  };
+
+  return (
+    <div className="modal-backdrop" onClick={e => e.target === e.currentTarget && onClose()}>
+      <div className="modal">
+        <div className="modal-header">
+          <span className="modal-title">Add New Category</span>
+          <button className="btn btn-ghost btn-icon btn-sm" onClick={onClose}><Icon name="close"/></button>
+        </div>
+        <div className="modal-body">
+          {error && <Alert type="error" onClose={() => setError('')}>{error}</Alert>}
+          <div className="form-group">
+            <label className="form-label">Slug <span style={{fontWeight:400,textTransform:'none',color:'var(--text-faint)'}}>(unique, e.g. office)</span></label>
+            <input className="form-input" style={{fontFamily:'var(--font-mono)'}} placeholder="e.g. office" value={form.slug} onChange={e => set('slug', e.target.value.toLowerCase().replace(/[^a-z0-9-]/g,''))}/>
+          </div>
+          <div className="form-group">
+            <label className="form-label">Display Name</label>
+            <input className="form-input" placeholder="e.g. Office Wrap Up" value={form.display_name} onChange={e => set('display_name', e.target.value)}/>
+          </div>
+          <div className="form-group">
+            <label className="form-label">Telegram Bot Token</label>
+            <input className="form-input" type="password" placeholder="1234567890:AAXXXXXXXX" value={form.bot_token} onChange={e => set('bot_token', e.target.value)}/>
+          </div>
+          <div className="form-group">
+            <label className="form-label">Telegram Chat ID</label>
+            <input className="form-input" placeholder="-1001234567890" value={form.chat_id} onChange={e => set('chat_id', e.target.value)}/>
+          </div>
+          <div className="form-group">
+            <label className="form-label">AI Prompt <span style={{fontWeight:400,textTransform:'none',color:'var(--text-faint)'}}>(optional)</span></label>
+            <textarea className="form-textarea" placeholder="You are a briefing agent for..." value={form.ai_prompt} onChange={e => set('ai_prompt', e.target.value)}/>
+          </div>
+        </div>
+        <div className="modal-footer">
+          <button className="btn btn-secondary" onClick={onClose}>Cancel</button>
+          <button className="btn btn-primary" onClick={handleSave} disabled={saving}>{saving ? <Spinner/> : <><Icon name="check" size={16}/>Create Category</>}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function CategoriesPage({ categories, onReload }) {
   const [alert, setAlert] = useState(null);
   const [editModal, setEditModal] = useState(null);
+  const [showAddModal, setShowAddModal] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [testing, setTesting] = useState(null);
 
   const toggleCat = async (id, current) => {
-    await api.patch(`/api/categories/${id}`, { is_active: !current });
+    await api.patch(`/api/categories/${id}`, {
+      display_name: categories.find(c => c.id === id)?.display_name || '',
+      is_active: !current
+    });
     onReload();
+  };
+
+  const deleteCat = async (id, slug) => {
+    if (slug === 'cc' || slug === 'deals') { setAlert({ type: 'error', msg: 'Cannot delete built-in CC or Deals categories.' }); return; }
+    if (!confirm('Delete this category and all its sources? This cannot be undone.')) return;
+    const res = await api.delete(`/api/categories/${id}`);
+    if (res.error) { setAlert({ type: 'error', msg: res.error }); return; }
+    setAlert({ type: 'success', msg: 'Category deleted.' });
+    onReload();
+  };
+
+  const testCat = async (id) => {
+    setTesting(id);
+    try {
+      const res = await api.post(`/api/categories/${id}/test`, {});
+      if (res.error) throw new Error(res.error);
+      setAlert({ type: 'success', msg: res.message || 'Test message sent successfully!' });
+    } catch (e) { setAlert({ type: 'error', msg: e.message }); }
+    finally { setTimeout(() => setTesting(null), 3000); }
   };
 
   const saveEdit = async () => {
@@ -605,6 +721,15 @@ function CategoriesPage({ categories, onReload }) {
   return (
     <div>
       {alert && <Alert type={alert.type} onClose={() => setAlert(null)}>{alert.msg}</Alert>}
+
+      {/* FIX #3: Add Category modal */}
+      {showAddModal && (
+        <AddCategoryModal
+          onClose={() => setShowAddModal(false)}
+          onSaved={() => { setShowAddModal(false); onReload(); setAlert({ type: 'success', msg: 'Category created successfully!' }); }}
+        />
+      )}
+
       {editModal && (
         <div className="modal-backdrop" onClick={e => e.target === e.currentTarget && setEditModal(null)}>
           <div className="modal">
@@ -625,6 +750,14 @@ function CategoriesPage({ categories, onReload }) {
           </div>
         </div>
       )}
+
+      {/* FIX #3: Add Category button in header area */}
+      <div style={{display:'flex',justifyContent:'flex-end',marginBottom:'var(--sp-5)'}}>
+        <button className="btn btn-primary" onClick={() => setShowAddModal(true)}>
+          <Icon name="plus" size={16}/>Add Category
+        </button>
+      </div>
+
       <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(320px,1fr))',gap:'var(--sp-5)'}}>
         {categories.map(cat => (
           <div key={cat.id} className="card">
@@ -641,7 +774,20 @@ function CategoriesPage({ categories, onReload }) {
                 Chat: {cat.chat_id || '—'}
               </div>
               {cat.ai_prompt && <div style={{fontSize:'var(--text-xs)',color:'var(--text-muted)',background:'var(--surface-2)',borderRadius:'var(--r-md)',padding:'var(--sp-2) var(--sp-3)',maxHeight:60,overflow:'hidden',lineHeight:1.5}}>{cat.ai_prompt.substring(0, 120)}...</div>}
-              <button className="btn btn-secondary btn-sm" style={{marginTop:'var(--sp-4)',width:'100%'}} onClick={() => setEditModal({...cat})}><Icon name="edit" size={14}/>Edit Category</button>
+              <div style={{display:'flex',gap:'var(--sp-2)',marginTop:'var(--sp-4)'}}>
+                <button className="btn btn-secondary btn-sm" style={{flex:1}} onClick={() => setEditModal({...cat})}><Icon name="edit" size={14}/>Edit</button>
+                <button
+                  className="btn btn-success btn-sm"
+                  style={{flex:1}}
+                  disabled={testing === cat.id}
+                  onClick={() => testCat(cat.id)}
+                >
+                  {testing === cat.id ? <Spinner/> : <><Icon name="test" size={14}/>Test Bot</>}
+                </button>
+                {cat.slug !== 'cc' && cat.slug !== 'deals' && (
+                  <button className="btn btn-danger btn-icon btn-sm" onClick={() => deleteCat(cat.id, cat.slug)} title="Delete category"><Icon name="trash" size={14}/></button>
+                )}
+              </div>
             </div>
           </div>
         ))}
@@ -663,13 +809,14 @@ function App() {
 
   const loadAll = useCallback(async () => {
     try {
+      // FIX #5: /api/health now exists and returns scraper_health rows
       const [cats, srcs, hlth] = await Promise.all([
         api.get('/api/categories'),
         api.get('/api/sources'),
         api.get('/api/health').catch(() => []),
       ]);
-      setCategories(cats);
-      setSources(srcs);
+      setCategories(Array.isArray(cats) ? cats : []);
+      setSources(Array.isArray(srcs) ? srcs : []);
       setHealth(Array.isArray(hlth) ? hlth : []);
     } catch(e) { console.error('Failed to load data', e); }
     finally { setLoading(false); }
@@ -758,7 +905,8 @@ function App() {
         <main className="page-body">
           {page === 'overview'   && <OverviewPage categories={categories} sources={sources} health={health}/>}
           {page === 'schedule'   && <SchedulePage categories={categories} scheduler={scheduler}/>}
-          {page === 'sources'    && <SourcesPage sources={sources} onReload={loadAll}/>}
+          {/* FIX #2: pass categories prop so source types are dynamically generated */}
+          {page === 'sources'    && <SourcesPage sources={sources} categories={categories} onReload={loadAll}/>}
           {page === 'categories' && <CategoriesPage categories={categories} onReload={loadAll}/>}
           {page === 'cookies'    && <CookiesPage/>}
           {page === 'health'     && (
@@ -766,7 +914,7 @@ function App() {
               <div className="card-header"><span className="card-title">All Scrapers</span></div>
               <div className="card-body">
                 {health.length === 0 ? (
-                  <div className="empty-state"><div className="empty-state-icon">❤️</div><h3>No health data yet</h3><p>Scraper health records appear after the first run.</p></div>
+                  <div className="empty-state"><div className="empty-state-icon">❤️</div><h3>No health data yet</h3><p>Scraper health records appear after the first run. Data populates as each scraper completes its cycle.</p></div>
                 ) : (
                   <div className="table-wrap">
                     <table>
@@ -774,25 +922,4 @@ function App() {
                       <tbody>
                         {health.map(h => (
                           <tr key={h.scraper_name}>
-                            <td><span className={`status-dot ${h.consecutive_failures===0?'green':h.consecutive_failures<3?'yellow':'red'}`} style={{marginRight:'var(--sp-2)'}}></span>{h.scraper_name}</td>
-                            <td className="td-mono">{h.last_success_at || '—'}</td>
-                            <td className="td-mono">{h.last_failure_at || '—'}</td>
-                            <td>{h.consecutive_failures > 0 ? <span className="badge badge-red">{h.consecutive_failures}</span> : <span className="badge badge-green">0</span>}</td>
-                            <td style={{maxWidth:220,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',fontSize:'var(--text-xs)',color:'var(--text-muted)'}}>{h.last_error || '—'}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
-        </main>
-      </div>
-    </div>
-  );
-}
-
-const root = ReactDOM.createRoot(document.getElementById('root'));
-root.render(<App/>);
+                            <td><span className={`status-dot ${h.consecutive_failures===0?'green':h.consecutive_failures

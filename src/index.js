@@ -94,6 +94,16 @@ function startDashboardServer(database, whatsapp, telegramUser, scheduler, summa
     });
   });
 
+  // ─── Scraper Health API ───────────────────────────────────────────────────
+  // FIX #5: expose scraper_health table so the dashboard Health page works
+  app.get('/api/health', (req, res) => {
+    try {
+      res.json(database.getAllScraperHealth());
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   // ─── Sources CRUD ────────────────────────────────────────────────────────
   app.get('/api/sources', (req, res) => {
     try {
@@ -123,7 +133,7 @@ function startDashboardServer(database, whatsapp, telegramUser, scheduler, summa
     }
   });
 
-  app.patch('/api/sources/:id/toggle', (req, res) => {
+  app.patch('/api/sources/:id', (req, res) => {
     try {
       const { is_active } = req.body;
       database.toggleSource(req.params.id, is_active);
@@ -264,18 +274,9 @@ function startDashboardServer(database, whatsapp, telegramUser, scheduler, summa
   });
 
   // ─── Schedules CRUD ──────────────────────────────────────────────────────
-  // GET /api/schedules               — all rules across all categories
-  // GET /api/schedules/:slug         — rules for one category slug
-  // POST /api/schedules              — add a new rule { category_slug, cron_expression, label }
-  // PATCH /api/schedules/:id         — update rule { cron_expression, label, is_active }
-  // PATCH /api/schedules/:id/toggle  — toggle is_active { is_active }
-  // DELETE /api/schedules/:id        — delete a rule
-  // POST /api/schedules/trigger      — manual run-now { slug? }
-
   app.get('/api/schedules', (req, res) => {
     try {
       const rules = database.getAllScheduleRules();
-      // Attach live job status from scheduler
       const liveStatus = scheduler.getStatus();
       const liveIds = new Set(liveStatus.map(j => j.ruleId));
       const enriched = rules.map(r => ({ ...r, is_running: liveIds.has(r.id) }));
@@ -300,12 +301,10 @@ function startDashboardServer(database, whatsapp, telegramUser, scheduler, summa
       if (!category_slug || !cron_expression || !label) {
         return res.status(400).json({ error: 'Missing category_slug, cron_expression, or label' });
       }
-      // Validate cron expression via node-cron
       const cron = require('node-cron');
       if (!cron.validate(cron_expression)) {
         return res.status(400).json({ error: `Invalid cron expression: "${cron_expression}"` });
       }
-      // Validate category exists
       const cat = database.getCategoryBySlug(category_slug);
       if (!cat) {
         return res.status(404).json({ error: `Category "${category_slug}" not found` });
@@ -322,6 +321,12 @@ function startDashboardServer(database, whatsapp, telegramUser, scheduler, summa
   app.patch('/api/schedules/:id', (req, res) => {
     try {
       const { cron_expression, label, is_active } = req.body;
+      // Allow toggle-only PATCH (only is_active, no cron/label required)
+      if (is_active !== undefined && !cron_expression && !label) {
+        database.toggleScheduleRule(req.params.id, is_active ? 1 : 0);
+        scheduler.reload();
+        return res.json({ success: true });
+      }
       if (!cron_expression || !label) {
         return res.status(400).json({ error: 'Missing cron_expression or label' });
       }
@@ -365,11 +370,25 @@ function startDashboardServer(database, whatsapp, telegramUser, scheduler, summa
     }
   });
 
+  // FIX #1: was /api/trigger — correct path is /api/schedules/trigger
   app.post('/api/schedules/trigger', async (req, res) => {
     try {
-      const { slug } = req.body; // optional: if omitted, runs all categories
+      const { slug } = req.body;
       logger.info(`⚡ Manual trigger via API${slug ? ` for category: ${slug}` : ' for all categories'}.`);
-      // Non-blocking — fire and forget, respond immediately
+      scheduler.triggerNow(slug || null).catch(e =>
+        logger.error(`Manual trigger error: ${e.message}`)
+      );
+      res.json({ success: true, message: slug ? `Brief triggered for "${slug}"` : 'Brief triggered for all categories' });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Keep legacy /api/trigger alias so any old bookmarks still work
+  app.post('/api/trigger', async (req, res) => {
+    try {
+      const { slug } = req.body;
+      logger.info(`⚡ [legacy /api/trigger] Manual trigger${slug ? ` for: ${slug}` : ' for all'}.`);
       scheduler.triggerNow(slug || null).catch(e =>
         logger.error(`Manual trigger error: ${e.message}`)
       );
@@ -434,39 +453,111 @@ function startDashboardServer(database, whatsapp, telegramUser, scheduler, summa
   });
 
   // ─── Session Cookies Manager APIs ─────────────────────────────────────────
+  // FIX #4: unified /api/cookies GET, POST, DELETE that the dashboard CookiesPage uses
+  app.get('/api/cookies', (req, res) => {
+    try {
+      const SITES = ['youtube', 'technofino', 'desidime', 'reddit'];
+      const result = SITES.map(site => {
+        const row = database.getCookies(site);
+        const filePath = path.resolve(__dirname, `../data/${site}_cookies.json`);
+        const fileExists = fs.existsSync(filePath);
+        let updatedAt = null;
+        if (row) {
+          // getCookies returns the parsed array; fetch updated_at via raw query
+          try {
+            const meta = database.db.prepare('SELECT updated_at FROM cookies WHERE site = ?').get(site);
+            updatedAt = meta ? meta.updated_at : null;
+          } catch (e) { /* ignore */ }
+        } else if (fileExists) {
+          const stat = fs.statSync(filePath);
+          updatedAt = stat.mtime.toISOString();
+        }
+        return { site, has_cookies: !!(row || fileExists), updated_at: updatedAt };
+      });
+      res.json(result);
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post('/api/cookies', (req, res) => {
+    try {
+      const { site, cookies } = req.body;
+      if (!site || !cookies) return res.status(400).json({ error: 'Missing site or cookies payload' });
+      const VALID_SITES = ['youtube', 'technofino', 'desidime', 'reddit'];
+      if (!VALID_SITES.includes(site)) {
+        return res.status(400).json({ error: `Invalid site. Must be one of: ${VALID_SITES.join(', ')}` });
+      }
+      let parsedCookies = cookies;
+      if (typeof cookies === 'string') {
+        try { parsedCookies = JSON.parse(cookies.trim()); }
+        catch (e) { return res.status(400).json({ error: 'Invalid JSON format. Please paste the full cookies array.' }); }
+      }
+      if (!Array.isArray(parsedCookies) || parsedCookies.length === 0) {
+        return res.status(400).json({ error: 'Cookies must be a non-empty JSON array.' });
+      }
+      database.saveCookies(site, parsedCookies);
+      try {
+        const targetPath = path.resolve(__dirname, `../data/${site}_cookies.json`);
+        const dir = path.dirname(targetPath);
+        if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+        fs.writeFileSync(targetPath, JSON.stringify(parsedCookies, null, 2), 'utf8');
+      } catch (fileErr) {
+        logger.debug(`Could not write cookies to file: ${fileErr.message}`);
+      }
+      logger.info(`🔐 Saved ${parsedCookies.length} cookies for ${site}.`);
+      res.json({ success: true });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.delete('/api/cookies/:site', (req, res) => {
+    try {
+      const { site } = req.params;
+      const VALID_SITES = ['youtube', 'technofino', 'desidime', 'reddit'];
+      if (!VALID_SITES.includes(site)) {
+        return res.status(400).json({ error: `Invalid site. Must be one of: ${VALID_SITES.join(', ')}` });
+      }
+      database.deleteCookies(site);
+      const targetPath = path.resolve(__dirname, `../data/${site}_cookies.json`);
+      if (fs.existsSync(targetPath)) fs.unlinkSync(targetPath);
+      logger.info(`❌ Deleted cookies for ${site}.`);
+      res.json({ success: true });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Legacy import/delete endpoints (keep for backward compat)
   app.get('/api/cookies/status', (req, res) => {
-    const desidimePath = path.resolve(__dirname, '../data/desidime_cookies.json');
-    const redditPath = path.resolve(__dirname, '../data/reddit_cookies.json');
-    const technofinoPath = path.resolve(__dirname, '../data/technofino_cookies.json');
-    const dbDesidime = database.getCookies('desidime');
-    const dbReddit = database.getCookies('reddit');
-    const dbTechnofino = database.getCookies('technofino');
-    res.json({
-      desidime: !!dbDesidime || fs.existsSync(desidimePath),
-      reddit: !!dbReddit || fs.existsSync(redditPath),
-      technofino: !!dbTechnofino || fs.existsSync(technofinoPath),
-    });
+    const SITES = ['youtube', 'technofino', 'desidime', 'reddit'];
+    const result = {};
+    for (const site of SITES) {
+      const row = database.getCookies(site);
+      const filePath = path.resolve(__dirname, `../data/${site}_cookies.json`);
+      result[site] = !!(row || fs.existsSync(filePath));
+    }
+    res.json(result);
   });
 
   app.post('/api/cookies/import', (req, res) => {
     try {
       const { site, cookies } = req.body;
       if (!site || !cookies) return res.status(400).json({ error: 'Missing site or cookies payload' });
-      if (!['desidime', 'reddit', 'technofino'].includes(site)) {
+      const VALID_SITES = ['youtube', 'technofino', 'desidime', 'reddit'];
+      if (!VALID_SITES.includes(site)) {
         return res.status(400).json({ error: 'Invalid site name' });
       }
-
       let parsedCookies = cookies;
       if (typeof cookies === 'string') {
         try { parsedCookies = JSON.parse(cookies.trim()); }
-        catch (e) { return res.status(400).json({ error: 'Invalid JSON format. Please paste the full cookies array.' }); }
+        catch (e) { return res.status(400).json({ error: 'Invalid JSON format.' }); }
       }
       if (!Array.isArray(parsedCookies)) {
         return res.status(400).json({ error: 'Cookies must be a valid JSON array.' });
       }
-
       database.saveCookies(site, parsedCookies);
-
       try {
         const targetPath = path.resolve(__dirname, `../data/${site}_cookies.json`);
         const dir = path.dirname(targetPath);
@@ -475,17 +566,13 @@ function startDashboardServer(database, whatsapp, telegramUser, scheduler, summa
       } catch (fileErr) {
         logger.debug(`Could not write cookies to legacy file: ${fileErr.message}`);
       }
-
       logger.info(`🔐 Saved imported cookies for ${site} successfully in DB & file.`);
-
       if (scrapers && scrapers[site]) {
-        logger.info(`🔄 Forcing immediate cookie reload and verification for: ${site}`);
         const fn = site === 'desidime'
           ? () => scrapers[site].scrapeDesiDime()
           : () => scrapers[site].scrape();
         fn().catch(e => logger.error(`Immediate ${site} scrape fail: ${e.message}`));
       }
-
       res.json({ success: true });
     } catch (err) {
       res.status(500).json({ error: err.message });
@@ -496,7 +583,8 @@ function startDashboardServer(database, whatsapp, telegramUser, scheduler, summa
     try {
       const { site } = req.body;
       if (!site) return res.status(400).json({ error: 'Missing site parameter' });
-      if (!['desidime', 'reddit', 'technofino'].includes(site)) {
+      const VALID_SITES = ['youtube', 'technofino', 'desidime', 'reddit'];
+      if (!VALID_SITES.includes(site)) {
         return res.status(400).json({ error: 'Invalid site name' });
       }
       database.deleteCookies(site);
@@ -521,10 +609,8 @@ async function main() {
 
   validateConfig();
 
-  // 1. Initialize persistent pre-compiled database layer
   const database = new MessageDatabase();
 
-  // 2. Seed default CC and Deals categories from env vars
   database.seedDefaultCategories(
     process.env.TELEGRAM_BOT_TOKEN,
     process.env.TELEGRAM_CHAT_ID,
@@ -532,13 +618,9 @@ async function main() {
     process.env.TELEGRAM_CHAT_ID
   );
 
-  // 3. Initialize unified fallback summarization engine
   const summarizer = new Summarizer(process.env.GEMINI_API_KEY, process.env.OPENROUTER_API_KEY);
-
-  // 4. Create bot instances for ALL active categories
   const botInstances = createBotInstances(database, summarizer);
 
-  // Central Session Alert Dispatcher (routes to primary CC Telegram Bot)
   const sendSystemAlert = async (message) => {
     logger.warn(`🚨 [System Alert] ${message}`);
     const ccBotInstance = botInstances.get('cc');
@@ -551,18 +633,15 @@ async function main() {
     }
   };
 
-  // 5. Initialize active ingestion observers
   const whatsapp = new WhatsAppListener(database, sendSystemAlert);
   const telegramUser = new TelegramUserListener(database, sendSystemAlert);
   const scheduler = new Scheduler(summarizer, botInstances, database);
 
-  // 6. Initialize lightweight scrapers (Puppeteer-free)
   const forumScraper = new ForumScraper(database, sendSystemAlert);
   const dealsScraper = new DealsScraper(database, sendSystemAlert);
   const redditScraper = new RedditScraper(database, sendSystemAlert);
   const youtubeScraper = new YoutubeScraper(database, summarizer);
 
-  // 7. Start Express server immediately to let Coolify healthchecks pass
   const scrapers = {
     reddit: redditScraper,
     technofino: forumScraper,
@@ -572,7 +651,6 @@ async function main() {
     database, whatsapp, telegramUser, scheduler, summarizer, botInstances, scrapers
   );
 
-  // 8. Start all bot instances
   for (const [slug, bot] of botInstances) {
     const connected = await bot.start();
     if (!connected) {
@@ -584,7 +662,6 @@ async function main() {
     }
   }
 
-  // 9. Bootstrap background listeners and schedules (non-blocking)
   whatsapp.start().catch(err => logger.error(`WhatsApp listener failed: ${err.message}`));
   telegramUser.start().catch(err => logger.error(`Telegram user listener failed: ${err.message}`));
   scheduler.start();
@@ -594,7 +671,6 @@ async function main() {
   redditScraper.start();
   youtubeScraper.start();
 
-  // Send startup notifications for all bots
   for (const [slug, bot] of botInstances) {
     try {
       if (slug === 'cc') {
@@ -609,7 +685,6 @@ async function main() {
     }
   }
 
-  // Graceful shutdown hooks
   const shutdown = async (signal) => {
     logger.info(`\n${signal} signal received. Powering down gracefully...`);
     scheduler.stop();
@@ -617,14 +692,11 @@ async function main() {
     dealsScraper.stop();
     redditScraper.stop();
     youtubeScraper.stop();
-
     await whatsapp.stop();
     await telegramUser.logout();
-
     for (const [, bot] of botInstances) {
       try { await bot.stop(); } catch (e) { /* ignore */ }
     }
-
     database.close();
     healthServer.close();
     logger.info('Graceful shutdown complete. Bye! 👋');
