@@ -95,7 +95,6 @@ function startDashboardServer(database, whatsapp, telegramUser, scheduler, summa
   });
 
   // ─── Scraper Health API ───────────────────────────────────────────────────
-  // FIX #5: expose scraper_health table so the dashboard Health page works
   app.get('/api/health', (req, res) => {
     try {
       res.json(database.getAllScraperHealth());
@@ -183,9 +182,17 @@ function startDashboardServer(database, whatsapp, telegramUser, scheduler, summa
     }
   });
 
+  // FIX: allow toggle-only PATCH (only is_active) without requiring display_name
   app.patch('/api/categories/:id', async (req, res) => {
     try {
       const { display_name, bot_token, chat_id, ai_prompt, is_active } = req.body;
+
+      // Toggle-only call: just flip is_active, no full update needed
+      if (is_active !== undefined && !display_name && !bot_token && !chat_id && ai_prompt === undefined) {
+        database.toggleCategory(req.params.id, is_active ? 1 : 0);
+        return res.json({ success: true });
+      }
+
       if (!display_name) return res.status(400).json({ error: 'Missing display_name' });
       database.updateCategory(
         req.params.id, display_name, bot_token, chat_id, ai_prompt,
@@ -295,6 +302,35 @@ function startDashboardServer(database, whatsapp, telegramUser, scheduler, summa
     }
   });
 
+  // FIX: /api/schedules/trigger MUST be registered BEFORE POST /api/schedules
+  // Otherwise Express matches "trigger" as the body of POST /api/schedules and returns an error.
+  app.post('/api/schedules/trigger', async (req, res) => {
+    try {
+      const { slug } = req.body;
+      logger.info(`⚡ Manual trigger via API${slug ? ` for category: ${slug}` : ' for all categories'}.`);
+      scheduler.triggerNow(slug || null).catch(e =>
+        logger.error(`Manual trigger error: ${e.message}`)
+      );
+      res.json({ success: true, message: slug ? `Brief triggered for "${slug}"` : 'Brief triggered for all categories' });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Keep legacy /api/trigger alias so any old bookmarks still work
+  app.post('/api/trigger', async (req, res) => {
+    try {
+      const { slug } = req.body;
+      logger.info(`⚡ [legacy /api/trigger] Manual trigger${slug ? ` for: ${slug}` : ' for all'}.`);
+      scheduler.triggerNow(slug || null).catch(e =>
+        logger.error(`Manual trigger error: ${e.message}`)
+      );
+      res.json({ success: true, message: slug ? `Brief triggered for "${slug}"` : 'Brief triggered for all categories' });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   app.post('/api/schedules', (req, res) => {
     try {
       const { category_slug, cron_expression, label } = req.body;
@@ -370,34 +406,6 @@ function startDashboardServer(database, whatsapp, telegramUser, scheduler, summa
     }
   });
 
-  // FIX #1: was /api/trigger — correct path is /api/schedules/trigger
-  app.post('/api/schedules/trigger', async (req, res) => {
-    try {
-      const { slug } = req.body;
-      logger.info(`⚡ Manual trigger via API${slug ? ` for category: ${slug}` : ' for all categories'}.`);
-      scheduler.triggerNow(slug || null).catch(e =>
-        logger.error(`Manual trigger error: ${e.message}`)
-      );
-      res.json({ success: true, message: slug ? `Brief triggered for "${slug}"` : 'Brief triggered for all categories' });
-    } catch (err) {
-      res.status(500).json({ error: err.message });
-    }
-  });
-
-  // Keep legacy /api/trigger alias so any old bookmarks still work
-  app.post('/api/trigger', async (req, res) => {
-    try {
-      const { slug } = req.body;
-      logger.info(`⚡ [legacy /api/trigger] Manual trigger${slug ? ` for: ${slug}` : ' for all'}.`);
-      scheduler.triggerNow(slug || null).catch(e =>
-        logger.error(`Manual trigger error: ${e.message}`)
-      );
-      res.json({ success: true, message: slug ? `Brief triggered for "${slug}"` : 'Brief triggered for all categories' });
-    } catch (err) {
-      res.status(500).json({ error: err.message });
-    }
-  });
-
   // ─── Telegram User Auth APIs ──────────────────────────────────────────────
   app.get('/api/telegram/status', (req, res) => {
     res.json({ isReady: telegramUser.isReady, tempPhone: telegramUser.tempPhone });
@@ -453,7 +461,6 @@ function startDashboardServer(database, whatsapp, telegramUser, scheduler, summa
   });
 
   // ─── Session Cookies Manager APIs ─────────────────────────────────────────
-  // FIX #4: unified /api/cookies GET, POST, DELETE that the dashboard CookiesPage uses
   app.get('/api/cookies', (req, res) => {
     try {
       const SITES = ['youtube', 'technofino', 'desidime', 'reddit'];
@@ -463,7 +470,6 @@ function startDashboardServer(database, whatsapp, telegramUser, scheduler, summa
         const fileExists = fs.existsSync(filePath);
         let updatedAt = null;
         if (row) {
-          // getCookies returns the parsed array; fetch updated_at via raw query
           try {
             const meta = database.db.prepare('SELECT updated_at FROM cookies WHERE site = ?').get(site);
             updatedAt = meta ? meta.updated_at : null;
