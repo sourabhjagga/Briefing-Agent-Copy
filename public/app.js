@@ -31,9 +31,25 @@ const Icon = ({ name, size = 18 }) => {
 };
 
 // ---- HELPERS ---- //
+
+// FIX: api.post now safely handles non-JSON server responses.
+// Previously r.json() was called unconditionally — if the server returned
+// a plain-text error or HTML page, this threw "JSON.parse: unexpected
+// character at line 1 column 1" which surfaced as a misleading parse error
+// in the Cookies page instead of the real server error message.
 const api = {
   get: (url) => fetch(url).then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); }),
-  post: (url, body) => fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).then(r => r.json()),
+  post: (url, body) => fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  }).then(async r => {
+    const ct = r.headers.get('content-type') || '';
+    if (ct.includes('application/json')) return r.json();
+    const text = await r.text();
+    if (!r.ok) throw new Error(text || `HTTP ${r.status}`);
+    return { ok: true, message: text };
+  }),
   delete: (url) => fetch(url, { method: 'DELETE' }).then(r => r.json()),
   patch: (url, body) => fetch(url, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).then(r => r.json()),
 };
@@ -392,9 +408,8 @@ function typeBadgeClass(type) {
   return TYPE_BADGE_MAP[suffix] || 'badge-gray';
 }
 
-// FIX #2: AddSourceModal fetches /api/categories fresh on mount so the
-// type dropdown always reflects the live category list, not the stale
-// App-level state that may still be [] when the modal first opens.
+// AddSourceModal fetches /api/categories fresh on mount so the
+// type dropdown always reflects the live category list.
 function AddSourceModal({ onClose, onSaved }) {
   const [liveCategories, setLiveCategories] = useState([]);
   const [loadingCats, setLoadingCats] = useState(true);
@@ -499,7 +514,6 @@ function SourcesPage({ sources, categories, onReload }) {
     <div>
       {alert && <Alert type={alert.type} onClose={() => setAlert(null)}>{alert.msg}</Alert>}
 
-      {/* FIX #2: AddSourceModal is now its own component that self-fetches categories */}
       {showAddModal && (
         <AddSourceModal
           onClose={() => setShowAddModal(false)}
@@ -570,22 +584,52 @@ function CookiesPage() {
 
   useEffect(() => { loadCookies(); }, []);
 
+  // FIX: Robust cookie file parser.
+  // Previously JSON.parse threw on .txt files and the outer catch showed
+  // the raw JS parse error instead of a user-friendly message.
+  // Now:
+  //   1. Normalise \r\n → \n so Windows-exported files work correctly.
+  //   2. Validate each line has exactly 7 tab-separated columns before
+  //      destructuring — malformed/short lines are silently skipped.
+  //   3. Only throw with a clear message if zero valid cookies are found.
   const handleFileSelect = async (site, file) => {
     if (!file) return;
     try {
       const text = await file.text();
       let parsed;
-      try { parsed = JSON.parse(text); }
-      catch (e) {
-        parsed = text.split('\n')
-          .filter(l => !l.startsWith('#') && l.trim())
+
+      // Try JSON first (EditThisCookie JSON export)
+      const trimmed = text.trim();
+      if (trimmed.startsWith('[') || trimmed.startsWith('{')) {
+        try {
+          parsed = JSON.parse(trimmed);
+          if (!Array.isArray(parsed)) parsed = [parsed];
+        } catch (_) {
+          parsed = null;
+        }
+      }
+
+      // Fall back to Netscape cookies.txt format
+      if (!parsed) {
+        parsed = text
+          .replace(/\r\n/g, '\n')
+          .replace(/\r/g, '\n')
+          .split('\n')
+          .filter(l => l.trim() && !l.startsWith('#'))
           .map(line => {
             const parts = line.split('\t');
-            const [domain,,, path, expires, name, value] = parts;
-            return { domain, path, name, value, expires: parseInt(expires) };
-          }).filter(c => c.name);
+            if (parts.length < 7) return null;
+            const [domain, , path, , expires, name, value] = parts;
+            if (!name || !name.trim()) return null;
+            return { domain: domain.trim(), path: path.trim(), name: name.trim(), value: (value || '').trim(), expires: parseInt(expires) || 0 };
+          })
+          .filter(Boolean);
       }
-      if (!Array.isArray(parsed) || parsed.length === 0) throw new Error('No valid cookies found in file.');
+
+      if (!Array.isArray(parsed) || parsed.length === 0) {
+        throw new Error('No valid cookies found. Make sure you exported a Netscape cookies.txt or EditThisCookie JSON file.');
+      }
+
       const res = await api.post('/api/cookies', { site, cookies: parsed });
       if (res.error) throw new Error(res.error);
       setAlert({ type: 'success', msg: `✅ ${parsed.length} cookies saved for ${site}!` });
@@ -704,9 +748,6 @@ function AddCategoryModal({ onClose, onSaved }) {
   );
 }
 
-// FIX #1: CategoriesPage — page-level header row with Add Category button
-// is now rendered ABOVE the card grid, outside the card content flow,
-// so it is always visible regardless of how many category cards exist.
 function CategoriesPage({ categories, onReload }) {
   const [alert, setAlert] = useState(null);
   const [editModal, setEditModal] = useState(null);
@@ -785,8 +826,7 @@ function CategoriesPage({ categories, onReload }) {
         </div>
       )}
 
-      {/* FIX #1: Dedicated action bar always rendered at the top, never
-          buried inside the card grid or dependent on card count. */}
+      {/* Dedicated action bar always rendered at the top */}
       <div style={{
         display: 'flex',
         alignItems: 'center',
