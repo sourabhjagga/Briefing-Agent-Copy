@@ -10,12 +10,12 @@ const logger = require('./logger');
 
 // Define a central, easily swappable fallback registry
 const FALLBACK_MODELS = [
-  { provider: 'gemini', id: 'gemini-3.1-flash-lite', name: 'Gemini 3.1 Flash Lite (High Quota)' },
-  { provider: 'gemini', id: 'gemini-3-flash', name: 'Gemini 3 Flash' },
-  { provider: 'gemini', id: 'gemini-2.5-flash-lite', name: 'Gemini 2.5 Flash Lite' },
-  { provider: 'openrouter', id: 'nvidia/nemotron-3-super-49b-v1:free', name: 'OpenRouter (Nemotron 3 49B)' },
-  { provider: 'openrouter', id: 'poolside/laguna-xs.2:free', name: 'OpenRouter (Laguna XS.2)' },
-  { provider: 'openrouter', id: 'deepseek/deepseek-v4-flash:free', name: 'OpenRouter (DeepSeek V4)' }
+  { provider: 'gemini', id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash (Primary)' },
+  { provider: 'gemini', id: 'gemini-2.0-flash', name: 'Gemini 2.0 Flash (Secondary)' },
+  { provider: 'gemini', id: 'gemini-2.5-flash-lite', name: 'Gemini 2.5 Flash Lite (High Quota)' },
+  { provider: 'openrouter', id: 'nvidia/llama-3.1-nemotron-ultra-253b-v1:free', name: 'OpenRouter (Nemotron Ultra 253B)' },
+  { provider: 'openrouter', id: 'deepseek/deepseek-r1-0528:free', name: 'OpenRouter (DeepSeek R1)' },
+  { provider: 'openrouter', id: 'meta-llama/llama-4-maverick:free', name: 'OpenRouter (Llama 4 Maverick)' }
 ];
 
 class Summarizer {
