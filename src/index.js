@@ -1,12 +1,12 @@
 /**
  * CC & Deals Briefing Agent — Main Entry Point
- * 
+ *
  * 1. Initializes the optimized pre-compiled database layer.
  * 2. Seeds default CC & Deals categories and loads all custom categories.
  * 3. Creates Telegram bot instances for each active category.
  * 4. Starts pure socket-based WhatsApp and Telegram listeners in background.
- * 5. Schedules daily briefings staggered by 30 seconds per category.
- * 6. Runs Express server exposing source CRUD, category CRUD, OTP, and session cookies APIs.
+ * 5. Schedules daily briefings staggered by 45 seconds per category.
+ * 6. Runs Express server exposing source CRUD, category CRUD, schedule CRUD, OTP, and session cookies APIs.
  * 7. Handles graceful shutdowns under Coolify and Docker containers.
  */
 
@@ -76,11 +76,11 @@ function createBotInstances(database, summarizer) {
 function startDashboardServer(database, whatsapp, telegramUser, scheduler, summarizer, botInstances, scrapers = {}) {
   const PORT = parseInt(process.env.HEALTH_PORT || '3000', 10);
   const app = express();
-  
+
   app.use(express.json());
   app.use(express.static(path.join(__dirname, '../public')));
 
-  // Health route
+  // ─── Health ──────────────────────────────────────────────────────────────
   app.get('/health', (req, res) => {
     const waStatus = whatsapp.getStatus();
     const msgCount = database.getTodayMessageCount('cc');
@@ -97,8 +97,7 @@ function startDashboardServer(database, whatsapp, telegramUser, scheduler, summa
   // ─── Sources CRUD ────────────────────────────────────────────────────────
   app.get('/api/sources', (req, res) => {
     try {
-      const sources = database.getAllSources();
-      res.json(sources);
+      res.json(database.getAllSources());
     } catch (err) {
       res.status(500).json({ error: err.message });
     }
@@ -137,8 +136,7 @@ function startDashboardServer(database, whatsapp, telegramUser, scheduler, summa
   // ─── Categories CRUD ─────────────────────────────────────────────────────
   app.get('/api/categories', (req, res) => {
     try {
-      const categories = database.getAllCategories();
-      res.json(categories);
+      res.json(database.getAllCategories());
     } catch (err) {
       res.status(500).json({ error: err.message });
     }
@@ -150,22 +148,15 @@ function startDashboardServer(database, whatsapp, telegramUser, scheduler, summa
       if (!slug || !display_name) {
         return res.status(400).json({ error: 'Missing slug or display_name' });
       }
-      // Validate slug: lowercase, alphanumeric + hyphens only
       if (!/^[a-z0-9-]+$/.test(slug)) {
         return res.status(400).json({ error: 'Slug must be lowercase letters, numbers, and hyphens only' });
       }
       database.addCategory(slug, display_name, bot_token, chat_id, ai_prompt);
-      
-      // Hot-reload: create bot instance if token+chatId provided
+
       if (bot_token && chat_id) {
         try {
           const newBot = new TelegramBotDispatcher(
-            bot_token,
-            chat_id,
-            database,
-            summarizer,
-            slug,
-            ai_prompt || undefined
+            bot_token, chat_id, database, summarizer, slug, ai_prompt || undefined
           );
           botInstances.set(slug, newBot);
           await newBot.start();
@@ -186,26 +177,18 @@ function startDashboardServer(database, whatsapp, telegramUser, scheduler, summa
     try {
       const { display_name, bot_token, chat_id, ai_prompt, is_active } = req.body;
       if (!display_name) return res.status(400).json({ error: 'Missing display_name' });
-      database.updateCategory(req.params.id, display_name, bot_token, chat_id, ai_prompt, is_active !== undefined ? is_active : 1);
+      database.updateCategory(
+        req.params.id, display_name, bot_token, chat_id, ai_prompt,
+        is_active !== undefined ? is_active : 1
+      );
 
-      // Hot-reload: recreate bot instances
       const updatedCat = database.getAllCategories().find(c => c.id === parseInt(req.params.id));
       if (updatedCat && bot_token && chat_id) {
         try {
-          // Stop old bot if exists
           const oldBot = botInstances.get(updatedCat.slug);
-          if (oldBot) {
-            await oldBot.stop();
-            botInstances.delete(updatedCat.slug);
-          }
-          // Create new bot
+          if (oldBot) { await oldBot.stop(); botInstances.delete(updatedCat.slug); }
           const newBot = new TelegramBotDispatcher(
-            bot_token,
-            chat_id,
-            database,
-            summarizer,
-            updatedCat.slug,
-            ai_prompt || undefined
+            bot_token, chat_id, database, summarizer, updatedCat.slug, ai_prompt || undefined
           );
           botInstances.set(updatedCat.slug, newBot);
           await newBot.start();
@@ -224,26 +207,21 @@ function startDashboardServer(database, whatsapp, telegramUser, scheduler, summa
 
   app.delete('/api/categories/:id', async (req, res) => {
     try {
-      // Find category before deletion to clean up bot
       const allCats = database.getAllCategories();
       const cat = allCats.find(c => c.id === parseInt(req.params.id));
-      
+
       if (cat && (cat.slug === 'cc' || cat.slug === 'deals')) {
         return res.status(400).json({ error: 'Cannot delete built-in CC or Deals categories' });
       }
 
-      const result = database.deleteCategory(req.params.id);
-      
-      // Clean up bot instance
+      database.deleteCategory(req.params.id);
+
       if (cat && botInstances.has(cat.slug)) {
-        try {
-          await botInstances.get(cat.slug).stop();
-        } catch (e) { /* ignore */ }
+        try { await botInstances.get(cat.slug).stop(); } catch (e) { /* ignore */ }
         botInstances.delete(cat.slug);
         scheduler.updateBotInstances(botInstances);
       }
 
-      // Also delete all sources associated with this category
       if (cat) {
         const catSources = database.getSourcesByCategory(cat.slug);
         catSources.forEach(s => database.deleteSource(s.id));
@@ -262,15 +240,13 @@ function startDashboardServer(database, whatsapp, telegramUser, scheduler, summa
       if (!cat.bot_token || !cat.chat_id) {
         return res.status(400).json({ error: 'Category must have a bot token and chat ID configured' });
       }
-
-      // Try sending a test message via the bot
       const { Telegraf } = require('telegraf');
       const testBot = new Telegraf(cat.bot_token);
-      await testBot.telegram.sendMessage(cat.chat_id, 
+      await testBot.telegram.sendMessage(
+        cat.chat_id,
         `🧪 <b>Test Message</b>\n\n✅ Category "${cat.display_name}" is configured correctly!\nBot token and Chat ID verified successfully.`,
         { parse_mode: 'HTML' }
       );
-
       res.json({ success: true, message: 'Test message sent successfully!' });
     } catch (err) {
       res.status(500).json({ error: `Test failed: ${err.message}` });
@@ -287,12 +263,125 @@ function startDashboardServer(database, whatsapp, telegramUser, scheduler, summa
     }
   });
 
+  // ─── Schedules CRUD ──────────────────────────────────────────────────────
+  // GET /api/schedules               — all rules across all categories
+  // GET /api/schedules/:slug         — rules for one category slug
+  // POST /api/schedules              — add a new rule { category_slug, cron_expression, label }
+  // PATCH /api/schedules/:id         — update rule { cron_expression, label, is_active }
+  // PATCH /api/schedules/:id/toggle  — toggle is_active { is_active }
+  // DELETE /api/schedules/:id        — delete a rule
+  // POST /api/schedules/trigger      — manual run-now { slug? }
+
+  app.get('/api/schedules', (req, res) => {
+    try {
+      const rules = database.getAllScheduleRules();
+      // Attach live job status from scheduler
+      const liveStatus = scheduler.getStatus();
+      const liveIds = new Set(liveStatus.map(j => j.ruleId));
+      const enriched = rules.map(r => ({ ...r, is_running: liveIds.has(r.id) }));
+      res.json(enriched);
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.get('/api/schedules/:slug', (req, res) => {
+    try {
+      const rules = database.getScheduleRules(req.params.slug);
+      res.json(rules);
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post('/api/schedules', (req, res) => {
+    try {
+      const { category_slug, cron_expression, label } = req.body;
+      if (!category_slug || !cron_expression || !label) {
+        return res.status(400).json({ error: 'Missing category_slug, cron_expression, or label' });
+      }
+      // Validate cron expression via node-cron
+      const cron = require('node-cron');
+      if (!cron.validate(cron_expression)) {
+        return res.status(400).json({ error: `Invalid cron expression: "${cron_expression}"` });
+      }
+      // Validate category exists
+      const cat = database.getCategoryBySlug(category_slug);
+      if (!cat) {
+        return res.status(404).json({ error: `Category "${category_slug}" not found` });
+      }
+      database.addScheduleRule(category_slug, cron_expression, label);
+      scheduler.reload();
+      logger.info(`📅 New schedule rule added for "${category_slug}": ${label} (${cron_expression})`);
+      res.json({ success: true });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.patch('/api/schedules/:id', (req, res) => {
+    try {
+      const { cron_expression, label, is_active } = req.body;
+      if (!cron_expression || !label) {
+        return res.status(400).json({ error: 'Missing cron_expression or label' });
+      }
+      const cron = require('node-cron');
+      if (!cron.validate(cron_expression)) {
+        return res.status(400).json({ error: `Invalid cron expression: "${cron_expression}"` });
+      }
+      database.updateScheduleRule(
+        req.params.id, cron_expression, label,
+        is_active !== undefined ? (is_active ? 1 : 0) : 1
+      );
+      scheduler.reload();
+      logger.info(`📅 Schedule rule #${req.params.id} updated.`);
+      res.json({ success: true });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.patch('/api/schedules/:id/toggle', (req, res) => {
+    try {
+      const { is_active } = req.body;
+      if (is_active === undefined) return res.status(400).json({ error: 'Missing is_active' });
+      database.toggleScheduleRule(req.params.id, is_active ? 1 : 0);
+      scheduler.reload();
+      logger.info(`📅 Schedule rule #${req.params.id} toggled to ${is_active ? 'active' : 'paused'}.`);
+      res.json({ success: true });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.delete('/api/schedules/:id', (req, res) => {
+    try {
+      database.deleteScheduleRule(req.params.id);
+      scheduler.reload();
+      logger.info(`📅 Schedule rule #${req.params.id} deleted.`);
+      res.json({ success: true });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post('/api/schedules/trigger', async (req, res) => {
+    try {
+      const { slug } = req.body; // optional: if omitted, runs all categories
+      logger.info(`⚡ Manual trigger via API${slug ? ` for category: ${slug}` : ' for all categories'}.`);
+      // Non-blocking — fire and forget, respond immediately
+      scheduler.triggerNow(slug || null).catch(e =>
+        logger.error(`Manual trigger error: ${e.message}`)
+      );
+      res.json({ success: true, message: slug ? `Brief triggered for "${slug}"` : 'Brief triggered for all categories' });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   // ─── Telegram User Auth APIs ──────────────────────────────────────────────
   app.get('/api/telegram/status', (req, res) => {
-    res.json({
-      isReady: telegramUser.isReady,
-      tempPhone: telegramUser.tempPhone
-    });
+    res.json({ isReady: telegramUser.isReady, tempPhone: telegramUser.tempPhone });
   });
 
   app.post('/api/telegram/send-code', async (req, res) => {
@@ -326,7 +415,6 @@ function startDashboardServer(database, whatsapp, telegramUser, scheduler, summa
     }
   });
 
-  // Discovery Endpoint: List subscribed Telegram channels
   app.get('/api/telegram/discover', async (req, res) => {
     try {
       const channels = await telegramUser.listAllSubscribedChannels();
@@ -336,7 +424,6 @@ function startDashboardServer(database, whatsapp, telegramUser, scheduler, summa
     }
   });
 
-  // Discovery Endpoint: List participating WhatsApp groups
   app.get('/api/whatsapp/discover', (req, res) => {
     try {
       const groups = whatsapp.getAllChats();
@@ -351,16 +438,13 @@ function startDashboardServer(database, whatsapp, telegramUser, scheduler, summa
     const desidimePath = path.resolve(__dirname, '../data/desidime_cookies.json');
     const redditPath = path.resolve(__dirname, '../data/reddit_cookies.json');
     const technofinoPath = path.resolve(__dirname, '../data/technofino_cookies.json');
-    
-    // Check DB first, fallback to file existence
     const dbDesidime = database.getCookies('desidime');
     const dbReddit = database.getCookies('reddit');
     const dbTechnofino = database.getCookies('technofino');
-
     res.json({
       desidime: !!dbDesidime || fs.existsSync(desidimePath),
       reddit: !!dbReddit || fs.existsSync(redditPath),
-      technofino: !!dbTechnofino || fs.existsSync(technofinoPath)
+      technofino: !!dbTechnofino || fs.existsSync(technofinoPath),
     });
   });
 
@@ -368,27 +452,21 @@ function startDashboardServer(database, whatsapp, telegramUser, scheduler, summa
     try {
       const { site, cookies } = req.body;
       if (!site || !cookies) return res.status(400).json({ error: 'Missing site or cookies payload' });
-      if (site !== 'desidime' && site !== 'reddit' && site !== 'technofino') {
+      if (!['desidime', 'reddit', 'technofino'].includes(site)) {
         return res.status(400).json({ error: 'Invalid site name' });
       }
 
       let parsedCookies = cookies;
       if (typeof cookies === 'string') {
-        try {
-          parsedCookies = JSON.parse(cookies.trim());
-        } catch (e) {
-          return res.status(400).json({ error: 'Invalid JSON format. Please paste the full cookies array.' });
-        }
+        try { parsedCookies = JSON.parse(cookies.trim()); }
+        catch (e) { return res.status(400).json({ error: 'Invalid JSON format. Please paste the full cookies array.' }); }
       }
-
       if (!Array.isArray(parsedCookies)) {
         return res.status(400).json({ error: 'Cookies must be a valid JSON array.' });
       }
 
-      // Save to SQLite DB for 100% persistent container redeployments
       database.saveCookies(site, parsedCookies);
 
-      // Legacy fallback: Save to file
       try {
         const targetPath = path.resolve(__dirname, `../data/${site}_cookies.json`);
         const dir = path.dirname(targetPath);
@@ -400,14 +478,12 @@ function startDashboardServer(database, whatsapp, telegramUser, scheduler, summa
 
       logger.info(`🔐 Saved imported cookies for ${site} successfully in DB & file.`);
 
-      // Trigger immediate cookie reload and re-verification scrape
       if (scrapers && scrapers[site]) {
         logger.info(`🔄 Forcing immediate cookie reload and verification for: ${site}`);
-        if (site === 'desidime') {
-          scrapers[site].scrapeDesiDime().catch(e => logger.error(`Immediate desidime scrape fail: ${e.message}`));
-        } else {
-          scrapers[site].scrape().catch(e => logger.error(`Immediate ${site} scrape fail: ${e.message}`));
-        }
+        const fn = site === 'desidime'
+          ? () => scrapers[site].scrapeDesiDime()
+          : () => scrapers[site].scrape();
+        fn().catch(e => logger.error(`Immediate ${site} scrape fail: ${e.message}`));
       }
 
       res.json({ success: true });
@@ -420,18 +496,12 @@ function startDashboardServer(database, whatsapp, telegramUser, scheduler, summa
     try {
       const { site } = req.body;
       if (!site) return res.status(400).json({ error: 'Missing site parameter' });
-      if (site !== 'desidime' && site !== 'reddit' && site !== 'technofino') {
+      if (!['desidime', 'reddit', 'technofino'].includes(site)) {
         return res.status(400).json({ error: 'Invalid site name' });
       }
-
-      // Delete from SQLite DB
       database.deleteCookies(site);
-
-      // Legacy fallback: Delete file
       const targetPath = path.resolve(__dirname, `../data/${site}_cookies.json`);
-      if (fs.existsSync(targetPath)) {
-        fs.unlinkSync(targetPath);
-      }
+      if (fs.existsSync(targetPath)) fs.unlinkSync(targetPath);
       logger.info(`❌ Deleted session cookies for ${site} from DB & file.`);
       res.json({ success: true });
     } catch (err) {
@@ -487,7 +557,6 @@ async function main() {
   const scheduler = new Scheduler(summarizer, botInstances, database);
 
   // 6. Initialize lightweight scrapers (Puppeteer-free)
-  const ccBot = botInstances.get('cc');
   const forumScraper = new ForumScraper(database, sendSystemAlert);
   const dealsScraper = new DealsScraper(database, sendSystemAlert);
   const redditScraper = new RedditScraper(database, sendSystemAlert);
@@ -497,16 +566,17 @@ async function main() {
   const scrapers = {
     reddit: redditScraper,
     technofino: forumScraper,
-    desidime: dealsScraper
+    desidime: dealsScraper,
   };
-  const healthServer = startDashboardServer(database, whatsapp, telegramUser, scheduler, summarizer, botInstances, scrapers);
+  const healthServer = startDashboardServer(
+    database, whatsapp, telegramUser, scheduler, summarizer, botInstances, scrapers
+  );
 
   // 8. Start all bot instances
   for (const [slug, bot] of botInstances) {
     const connected = await bot.start();
     if (!connected) {
       logger.warn(`⚠️ Telegram Bot for category "${slug}" failed to connect.`);
-      // Only exit for the primary CC bot
       if (slug === 'cc') {
         logger.error('Cannot connect to Main CC Telegram Bot. Verify your TELEGRAM_BOT_TOKEN.');
         process.exit(1);
@@ -518,7 +588,7 @@ async function main() {
   whatsapp.start().catch(err => logger.error(`WhatsApp listener failed: ${err.message}`));
   telegramUser.start().catch(err => logger.error(`Telegram user listener failed: ${err.message}`));
   scheduler.start();
-  
+
   forumScraper.start();
   dealsScraper.start();
   redditScraper.start();
@@ -547,14 +617,12 @@ async function main() {
     dealsScraper.stop();
     redditScraper.stop();
     youtubeScraper.stop();
-    
+
     await whatsapp.stop();
     await telegramUser.logout();
-    
-    for (const [slug, bot] of botInstances) {
-      try {
-        await bot.stop();
-      } catch (e) { /* ignore */ }
+
+    for (const [, bot] of botInstances) {
+      try { await bot.stop(); } catch (e) { /* ignore */ }
     }
 
     database.close();

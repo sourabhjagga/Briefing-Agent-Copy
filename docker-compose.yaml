@@ -5,9 +5,9 @@ services:
     build: .
     container_name: cc-brief-agent
     restart: unless-stopped
-    # Consolidated single volume mount to persist all SQLite DBs, WhatsApp, and Telegram sessions
     volumes:
       - cc_brief_data_test:/app/data
+      - cc_brief_logs:/app/logs
     ports:
       - "3001:3000"
     environment:
@@ -47,6 +47,7 @@ services:
   flaresolverr:
     image: ghcr.io/flaresolverr/flaresolverr:latest
     container_name: flaresolverr
+    mem_limit: 1g
     environment:
       - LOG_LEVEL=${FLARESOLVERR_LOG_LEVEL:-info}
       - CAPTCHA_SOLVER=none
@@ -58,3 +59,5 @@ services:
 volumes:
   cc_brief_data_test:
     name: cc_brief_data_test
+  cc_brief_logs:
+    name: cc_brief_logs
