@@ -7,8 +7,12 @@ WORKDIR /app
 # Copy package descriptors
 COPY package*.json ./
 
+# Skip chromium download in builder stage to prevent OOM/hangs during build
+ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
+
 # Install dependencies and force compilation scripts to run as root (foreground-scripts)
 # This completely bypasses the NPM privilege-downgrade write permission bug
+RUN rm -rf node_modules package-lock.json
 RUN npm install --omit=dev --foreground-scripts
 
 # ─── STAGE 2: RUNTIME ───────────────────────────────────────────────────
