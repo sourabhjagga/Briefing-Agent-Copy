@@ -34,7 +34,9 @@ class TelegramUserListener {
     }
     
     const clientOptions = {
-      connectionRetries: 5,
+      connectionRetries: 10,
+      requestRetries: 5,
+      useWSS: false, // Explicitly disable WSS as it conflicts with proxies
     };
 
     const proxyUrl = process.env.TELEGRAM_PROXY;
