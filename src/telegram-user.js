@@ -74,15 +74,15 @@ class TelegramUserListener {
     }
 
     try {
-      // Connect to Telegram DC with a 20-second hard timeout to avoid blocking the Express API server
+      // Connect to Telegram DC with a 60-second hard timeout to avoid blocking the Express API server
       await Promise.race([
         this.client.connect(),
-        new Promise((_, reject) => setTimeout(() => reject(new Error('Telegram connection timeout')), 20000))
+        new Promise((_, reject) => setTimeout(() => reject(new Error('Telegram connection timeout')), 60000))
       ]);
       
       const isAuthorized = await Promise.race([
         this.client.isUserAuthorized().catch(() => false),
-        new Promise((_, reject) => setTimeout(() => reject(new Error('Telegram auth check timeout')), 10000))
+        new Promise((_, reject) => setTimeout(() => reject(new Error('Telegram auth check timeout')), 30000))
       ]).catch(() => false);
 
       if (isAuthorized) {
