@@ -58,6 +58,7 @@ class TelegramUserListener {
 
     this.session = new StringSession(initialSession);
     this.client = new TelegramClient(this.session, this.apiId, this.apiHash, clientOptions);
+    this.client.setLogLevel("none"); // Suppress noisy GramJS disconnect/reconnect logs caused by expected proxy TCP idle timeouts
     
     this.isReady = false;
     this.tempPhone = null;
