@@ -120,11 +120,21 @@ class MessageDatabase {
     // 2. Schema Migrations (Manual fixes for existing databases)
     const tableInfo = this.db.prepare("PRAGMA table_info(categories)").all();
     const hasDeliveryChannel = tableInfo.some(col => col.name === 'delivery_channel');
+    const hasWhatsAppDeliveryJid = tableInfo.some(col => col.name === 'whatsapp_delivery_jid');
     
     if (!hasDeliveryChannel) {
       try {
         this.db.exec("ALTER TABLE categories ADD COLUMN delivery_channel TEXT DEFAULT 'telegram'");
         logger.info('🚀 Database Migration: Added delivery_channel column to categories table.');
+      } catch (err) {
+        logger.error(`❌ Migration failed: ${err.message}`);
+      }
+    }
+
+    if (!hasWhatsAppDeliveryJid) {
+      try {
+        this.db.exec("ALTER TABLE categories ADD COLUMN whatsapp_delivery_jid TEXT");
+        logger.info('🚀 Database Migration: Added whatsapp_delivery_jid column to categories table.');
       } catch (err) {
         logger.error(`❌ Migration failed: ${err.message}`);
       }
@@ -223,18 +233,19 @@ class MessageDatabase {
         SELECT * FROM categories WHERE slug = ?
       `),
       addCategory: this.db.prepare(`
-        INSERT INTO categories (slug, display_name, bot_token, chat_id, ai_prompt, is_active, delivery_channel)
-        VALUES (?, ?, ?, ?, ?, 1, ?)
+        INSERT INTO categories (slug, display_name, bot_token, chat_id, ai_prompt, is_active, delivery_channel, whatsapp_delivery_jid)
+        VALUES (?, ?, ?, ?, ?, 1, ?, ?)
         ON CONFLICT(slug) DO UPDATE SET
           display_name=excluded.display_name,
           bot_token=excluded.bot_token,
           chat_id=excluded.chat_id,
           ai_prompt=excluded.ai_prompt,
           delivery_channel=excluded.delivery_channel,
+          whatsapp_delivery_jid=excluded.whatsapp_delivery_jid,
           is_active=1
       `),
       updateCategory: this.db.prepare(`
-        UPDATE categories SET display_name=?, bot_token=?, chat_id=?, ai_prompt=?, is_active=?, delivery_channel=? WHERE id=?
+        UPDATE categories SET display_name=?, bot_token=?, chat_id=?, ai_prompt=?, is_active=?, delivery_channel=?, whatsapp_delivery_jid=? WHERE id=?
       `),
       deleteCategory: this.db.prepare(`
         DELETE FROM categories WHERE id = ? AND slug NOT IN ('cc', 'deals')
@@ -383,11 +394,11 @@ class MessageDatabase {
   getAllCategories() { return this.statements.getAllCategories.all(); }
   getActiveCategories() { return this.statements.getActiveCategories.all(); }
   getCategoryBySlug(slug) { return this.statements.getCategoryBySlug.get(slug); }
-  addCategory(slug, displayName, botToken, chatId, aiPrompt, deliveryChannel = 'telegram') {
-    this.statements.addCategory.run(slug, displayName, botToken || null, chatId || null, aiPrompt || null, deliveryChannel);
+  addCategory(slug, displayName, botToken, chatId, aiPrompt, deliveryChannel = 'telegram', whatsappDeliveryJid = null) {
+    this.statements.addCategory.run(slug, displayName, botToken || null, chatId || null, aiPrompt || null, deliveryChannel, whatsappDeliveryJid);
   }
-  updateCategory(id, displayName, botToken, chatId, aiPrompt, isActive, deliveryChannel = 'telegram') {
-    this.statements.updateCategory.run(displayName, botToken || null, chatId || null, aiPrompt || null, isActive ? 1 : 0, deliveryChannel, id);
+  updateCategory(id, displayName, botToken, chatId, aiPrompt, isActive, deliveryChannel = 'telegram', whatsappDeliveryJid = null) {
+    this.statements.updateCategory.run(displayName, botToken || null, chatId || null, aiPrompt || null, isActive ? 1 : 0, deliveryChannel, whatsappDeliveryJid, id);
   }
   deleteCategory(id) { return this.statements.deleteCategory.run(id); }
   toggleCategory(id, isActive) { this.statements.toggleCategory.run(isActive ? 1 : 0, id); }
@@ -427,6 +438,12 @@ class MessageDatabase {
 
   getSourcesByCategory(categorySlug) {
     return this.getAllSources().filter(s => s.type.startsWith(categorySlug + '-'));
+  }
+
+  getWhatsAppTargets(categorySlug) {
+    return this.getAllSources().filter(s => 
+      s.type === `${categorySlug}-whatsapp` && s.is_active === 1
+    );
   }
 
   saveCookies(site, cookiesArray) {

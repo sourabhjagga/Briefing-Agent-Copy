@@ -153,14 +153,14 @@ function startDashboardServer(database, whatsapp, telegramUser, scheduler, summa
 
   app.post('/api/categories', async (req, res) => {
     try {
-      const { slug, display_name, bot_token, chat_id, ai_prompt, delivery_channel, whatsapp_target_id } = req.body;
+      const { slug, display_name, bot_token, chat_id, ai_prompt, delivery_channel, whatsapp_delivery_jid } = req.body;
       if (!slug || !display_name) {
         return res.status(400).json({ error: 'Missing slug or display_name' });
       }
       if (!/^[a-z0-9-]+$/.test(slug)) {
         return res.status(400).json({ error: 'Slug must be lowercase letters, numbers, and hyphens only' });
       }
-      database.addCategory(slug, display_name, bot_token, chat_id, ai_prompt, delivery_channel, whatsapp_target_id);
+      database.addCategory(slug, display_name, bot_token, chat_id, ai_prompt, delivery_channel, whatsapp_delivery_jid);
 
       if (bot_token && chat_id) {
         try {
@@ -185,7 +185,7 @@ function startDashboardServer(database, whatsapp, telegramUser, scheduler, summa
   // FIX: allow toggle-only PATCH (only is_active) without requiring display_name
   app.patch('/api/categories/:id', async (req, res) => {
     try {
-      const { display_name, bot_token, chat_id, ai_prompt, is_active, delivery_channel, whatsapp_target_id } = req.body;
+      const { display_name, bot_token, chat_id, ai_prompt, is_active, delivery_channel, whatsapp_delivery_jid } = req.body;
 
       // Toggle-only call: just flip is_active, no full update needed
       if (is_active !== undefined && !display_name && !bot_token && !chat_id && ai_prompt === undefined) {
@@ -196,7 +196,7 @@ function startDashboardServer(database, whatsapp, telegramUser, scheduler, summa
       if (!display_name) return res.status(400).json({ error: 'Missing display_name' });
       database.updateCategory(
         req.params.id, display_name, bot_token, chat_id, ai_prompt,
-        is_active !== undefined ? is_active : 1, delivery_channel, whatsapp_target_id     );
+        is_active !== undefined ? is_active : 1, delivery_channel, whatsapp_delivery_jid);
 
       const updatedCat = database.getAllCategories().find(c => c.id === parseInt(req.params.id));
       if (updatedCat && bot_token && chat_id) {
@@ -454,6 +454,39 @@ function startDashboardServer(database, whatsapp, telegramUser, scheduler, summa
     try {
       const groups = whatsapp.getAllChats();
       res.json(groups);
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // ─── WhatsApp Sources Management ──────────────────────────────────────────
+  app.get('/api/whatsapp/sources', (req, res) => {
+    try {
+      const allSources = database.getAllSources().filter(s => s.type.endsWith('-whatsapp'));
+      res.json(allSources);
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post('/api/whatsapp/sources', (req, res) => {
+    try {
+      const { name, source_id, category_slug } = req.body;
+      if (!name || !source_id || !category_slug) {
+        return res.status(400).json({ error: 'Missing name, source_id, or category_slug' });
+      }
+      const type = `${category_slug}-whatsapp`;
+      database.addSource(name, source_id.trim(), type);
+      res.json({ success: true });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.delete('/api/whatsapp/sources/:id', (req, res) => {
+    try {
+      database.deleteSource(req.params.id);
+      res.json({ success: true });
     } catch (err) {
       res.status(500).json({ error: err.message });
     }

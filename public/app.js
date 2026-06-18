@@ -690,8 +690,13 @@ function CookiesPage() {
 }
 
 // ---- CATEGORIES PAGE ---- //
+function isValidWhatsAppJid(jid) {
+  if (!jid || jid.trim() === '') return true;
+  return /^\d{7,15}@s\.whatsapp\.net$/.test(jid) || /^\d{7,15}(-\d+)?@g\.us$/.test(jid) || /^\d{7,15}(-\d+)?@newsletter$/.test(jid);
+}
+
 function AddCategoryModal({ onClose, onSaved }) {
-  const [form, setForm] = useState({ slug: '', display_name: '', bot_token: '', chat_id: '', ai_prompt: '', delivery_channel: 'telegram', whatsapp_target_id: '' });
+  const [form, setForm] = useState({ slug: '', display_name: '', bot_token: '', chat_id: '', ai_prompt: '', delivery_channel: 'telegram', whatsapp_delivery_jid: '' });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
@@ -700,6 +705,10 @@ function AddCategoryModal({ onClose, onSaved }) {
   const handleSave = async () => {
     if (!form.slug || !form.display_name) { setError('Slug and Display Name are required.'); return; }
     if (!/^[a-z0-9-]+$/.test(form.slug)) { setError('Slug must be lowercase letters, numbers, and hyphens only.'); return; }
+    if ((form.delivery_channel === 'whatsapp' || form.delivery_channel === 'both') && form.whatsapp_delivery_jid && !isValidWhatsAppJid(form.whatsapp_delivery_jid)) {
+      setError('Invalid WhatsApp JID format. Use: 919876543210@s.whatsapp.net (individual) or 120363xxx@g.us (group)');
+      return;
+    }
     setSaving(true); setError('');
     try {
       const res = await api.post('/api/categories', form);
@@ -737,13 +746,15 @@ function AddCategoryModal({ onClose, onSaved }) {
           <div className="form-group">
             <label className="form-label">Delivery Channel</label>
             <select className="form-input" value={form.delivery_channel} onChange={e => set('delivery_channel', e.target.value)}>
-              <option value="telegram">Telegram</option>
-              <option value="whatsapp">WhatsApp</option>
+              <option value="telegram">Telegram Only</option>
+              <option value="whatsapp">WhatsApp Only</option>
+              <option value="both">Both (Telegram + WhatsApp)</option>
             </select>
           </div>
-          <div className="form-group" style={{display: form.delivery_channel === 'whatsapp' ? 'block' : 'none'}}>
-            <label className="form-label">WhatsApp Target ID</label>
-            <input className="form-input" placeholder="e.g., 1234567890@g.us" value={form.whatsapp_target_id} onChange={e => set('whatsapp_target_id', e.target.value)}/>
+          <div className="form-group" style={{display: (form.delivery_channel === 'whatsapp' || form.delivery_channel === 'both') ? 'block' : 'none'}}>
+            <label className="form-label">WhatsApp Briefing Delivery Target</label>
+            <input className="form-input" style={{fontFamily:'var(--font-mono)'}} placeholder="e.g., 919876543210@s.whatsapp.net" value={form.whatsapp_delivery_jid} onChange={e => set('whatsapp_delivery_jid', e.target.value)}/>
+            <div className="form-hint">Your number as JID (919876543210@s.whatsapp.net) or a dedicated briefing group (120363xxx@g.us). Only ONE target receives briefings.</div>
           </div>
           <div className="form-group">
             <label className="form-label">AI Prompt <span style={{fontWeight:400,textTransform:'none',color:'var(--text-faint)'}}>(optional)</span></label>
@@ -827,15 +838,20 @@ function CategoriesPage({ categories, onReload, whatsappStatus }) {
               <div className="form-group"><label className="form-label">Display Name</label><input className="form-input" value={editModal.display_name} onChange={e => setEditModal(p => ({...p, display_name: e.target.value}))}/></div>
               <div className="form-group"><label className="form-label">Telegram Bot Token</label><input className="form-input" type="password" value={editModal.bot_token || ''} onChange={e => setEditModal(p => ({...p, bot_token: e.target.value}))}/></div>
               <div className="form-group"><label className="form-label">Telegram Chat ID</label><input className="form-input" value={editModal.chat_id || ''} onChange={e => setEditModal(p => ({...p, chat_id: e.target.value}))}/></div>
-              <div className="form-group" style={{display: editModal.delivery_channel === 'whatsapp' ? 'block' : 'none'}}><label className="form-label">WhatsApp Target ID</label><input className="form-input" value={editModal.whatsapp_target_id || ''} onChange={e => setEditModal(p => ({...p, whatsapp_target_id: e.target.value}))}/></div>
               <div className="form-group">
                 <label className="form-label">Delivery Channel</label>
                 <select className="form-input" value={editModal.delivery_channel || 'telegram'} onChange={e => setEditModal(p => ({...p, delivery_channel: e.target.value}))}>
-                  <option value="telegram">Telegram</option>
-                  <option value="whatsapp">WhatsApp</option>
+                  <option value="telegram">Telegram Only</option>
+                  <option value="whatsapp">WhatsApp Only</option>
+                  <option value="both">Both (Telegram + WhatsApp)</option>
                 </select>
               </div>
-              {editModal.delivery_channel === 'whatsapp' && whatsappStatus.qr && (
+              <div className="form-group" style={{display: (editModal.delivery_channel === 'whatsapp' || editModal.delivery_channel === 'both') ? 'block' : 'none'}}>
+                <label className="form-label">WhatsApp Briefing Delivery Target</label>
+                <input className="form-input" style={{fontFamily:'var(--font-mono)'}} value={editModal.whatsapp_delivery_jid || ''} onChange={e => setEditModal(p => ({...p, whatsapp_delivery_jid: e.target.value}))}/>
+                <div className="form-hint">Your number as JID (919876543210@s.whatsapp.net) or a dedicated briefing group (120363xxx@g.us). Only ONE target receives briefings.</div>
+              </div>
+              {(editModal.delivery_channel === 'whatsapp' || editModal.delivery_channel === 'both') && whatsappStatus.qr && (
                 <div className="form-group">
                   <label className="form-label">Scan QR for WhatsApp</label>
                   <div style={{display:'flex',justifyContent:'center',padding:'var(--sp-4)',background:'var(--surface-1)',borderRadius:'var(--r-md)'}}>
@@ -886,6 +902,11 @@ function CategoriesPage({ categories, onReload, whatsappStatus }) {
               <div style={{fontSize:'var(--text-xs)',color:'var(--text-faint)',fontFamily:'var(--font-mono)',marginBottom:'var(--sp-3)'}}>
                 Channel: <span style={{textTransform:'capitalize'}}>{cat.delivery_channel || 'telegram'}</span> | Chat: {cat.chat_id || '—'}
               </div>
+              {cat.whatsapp_delivery_jid && (
+                <div style={{fontSize:'var(--text-xs)',color:'var(--accent)',fontFamily:'var(--font-mono)',marginBottom:'var(--sp-3)'}}>
+                  WhatsApp Target: {cat.whatsapp_delivery_jid}
+                </div>
+              )}
               {cat.ai_prompt && <div style={{fontSize:'var(--text-xs)',color:'var(--text-muted)',background:'var(--surface-2)',borderRadius:'var(--r-md)',padding:'var(--sp-2) var(--sp-3)',maxHeight:60,overflow:'hidden',lineHeight:1.5}}>{cat.ai_prompt.substring(0, 120)}...</div>}
               <div style={{display:'flex',gap:'var(--sp-2)',marginTop:'var(--sp-4)'}}>
                 <button className="btn btn-secondary btn-sm" style={{flex:1}} onClick={() => setEditModal({...cat})}><Icon name="edit" size={14}/>Edit</button>

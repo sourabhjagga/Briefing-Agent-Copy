@@ -119,9 +119,14 @@ class Scheduler {
 
       if (messages.length === 0) {
         logger.info(`[${sourcePrefix}] Skipping brief — 0 messages captured today.`);
-        if (deliveryChannel === 'whatsapp' && adminJid) {
-          await this.whatsapp.sendMessage(adminJid, `🤷‍♂️ *No updates today!*\n\nThere were no messages captured from your monitored ${sourcePrefix.toUpperCase()} sources today.`);
-        } else if (telegramInstance) {
+        const shouldSendWhatsApp = deliveryChannel === 'whatsapp' || deliveryChannel === 'both';
+        const shouldSendTelegram = deliveryChannel === 'telegram' || deliveryChannel === 'both';
+        const deliveryJid = category?.whatsapp_delivery_jid || adminJid;
+        
+        if (shouldSendWhatsApp && deliveryJid) {
+          await this.whatsapp.sendMessage(deliveryJid, `🤷‍♂️ *No updates today!*\n\nThere were no messages captured from your monitored ${sourcePrefix.toUpperCase()} sources today.`);
+        }
+        if (shouldSendTelegram && telegramInstance) {
           await telegramInstance.sendMessage(`🤷‍♂️ <b>No updates today!</b>\n\nThere were no messages captured from your monitored ${sourcePrefix.toUpperCase()} sources today.`);
         }
         return;
@@ -132,10 +137,30 @@ class Scheduler {
       
       const summary = await this.summarizer.generateSummary(messages, customPrompt);
       
-      if (deliveryChannel === 'whatsapp' && adminJid) {
+      // Delivery: WhatsApp
+      const shouldSendWhatsApp = deliveryChannel === 'whatsapp' || deliveryChannel === 'both';
+      const shouldSendTelegram = deliveryChannel === 'telegram' || deliveryChannel === 'both';
+      
+      if (shouldSendWhatsApp) {
         const plainSummary = summary.replace(/<[^>]*>/g, '');
-        await this.whatsapp.sendMessage(adminJid, plainSummary);
-      } else if (telegramInstance) {
+        
+        // Use category-specific delivery JID if configured, else fall back to admin JID
+        const deliveryJid = category?.whatsapp_delivery_jid || adminJid;
+        
+        if (deliveryJid) {
+          try {
+            await this.whatsapp.sendMessage(deliveryJid, plainSummary);
+            logger.info(`✅ WhatsApp briefing sent to delivery target: ${deliveryJid}`);
+          } catch (err) {
+            logger.error(`Failed to send WhatsApp briefing to ${deliveryJid}: ${err.message}`);
+          }
+        } else {
+          logger.warn(`⚠️ No WhatsApp delivery target configured for category "${sourcePrefix}". Skipping WhatsApp delivery.`);
+        }
+      }
+      
+      // Delivery: Telegram
+      if (shouldSendTelegram && telegramInstance) {
         await telegramInstance.sendMessage(summary);
       }
 
@@ -148,7 +173,18 @@ class Scheduler {
     } catch (error) {
       logger.error(`[${sourcePrefix}] Briefing generation failed: ${error.message}`);
       try {
-        if (telegramInstance) {
+        const category = this.database.getCategoryBySlug(sourcePrefix);
+        const deliveryChannel = category?.delivery_channel || 'telegram';
+        const shouldSendWhatsApp = deliveryChannel === 'whatsapp' || deliveryChannel === 'both';
+        const shouldSendTelegram = deliveryChannel === 'telegram' || deliveryChannel === 'both';
+        const adminJid = process.env.WHATSAPP_ADMIN_JID;
+        const deliveryJid = category?.whatsapp_delivery_jid || adminJid;
+        
+        if (shouldSendWhatsApp && deliveryJid) {
+          const plainError = `⚠️ *Briefing Error*\n\nFailed to generate today's ${sourcePrefix.toUpperCase()} summary.\nError: ${error.message}`;
+          await this.whatsapp.sendMessage(deliveryJid, plainError);
+        }
+        if (shouldSendTelegram && telegramInstance) {
             await telegramInstance.sendMessage(
               `⚠️ <b>Briefing Error</b>\n\nFailed to generate today's ${sourcePrefix.toUpperCase()} summary.\nError: ${error.message}`
             );
