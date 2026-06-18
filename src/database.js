@@ -26,6 +26,7 @@ class MessageDatabase {
   }
 
   _initialize() {
+    // 1. Initial schema creation
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS messages (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -115,6 +116,19 @@ class MessageDatabase {
         updated_at TEXT DEFAULT (datetime('now'))
       );
     `);
+
+    // 2. Schema Migrations (Manual fixes for existing databases)
+    const tableInfo = this.db.prepare("PRAGMA table_info(categories)").all();
+    const hasDeliveryChannel = tableInfo.some(col => col.name === 'delivery_channel');
+    
+    if (!hasDeliveryChannel) {
+      try {
+        this.db.exec("ALTER TABLE categories ADD COLUMN delivery_channel TEXT DEFAULT 'telegram'");
+        logger.info('🚀 Database Migration: Added delivery_channel column to categories table.');
+      } catch (err) {
+        logger.error(`❌ Migration failed: ${err.message}`);
+      }
+    }
   }
 
   _compileStatements() {
