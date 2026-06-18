@@ -691,7 +691,7 @@ function CookiesPage() {
 
 // ---- CATEGORIES PAGE ---- //
 function AddCategoryModal({ onClose, onSaved }) {
-  const [form, setForm] = useState({ slug: '', display_name: '', bot_token: '', chat_id: '', ai_prompt: '' });
+  const [form, setForm] = useState({ slug: '', display_name: '', bot_token: '', chat_id: '', ai_prompt: '', delivery_channel: 'telegram' });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
@@ -733,6 +733,13 @@ function AddCategoryModal({ onClose, onSaved }) {
           <div className="form-group">
             <label className="form-label">Telegram Chat ID</label>
             <input className="form-input" placeholder="-1001234567890" value={form.chat_id} onChange={e => set('chat_id', e.target.value)}/>
+          </div>
+          <div className="form-group">
+            <label className="form-label">Delivery Channel</label>
+            <select className="form-input" value={form.delivery_channel} onChange={e => set('delivery_channel', e.target.value)}>
+              <option value="telegram">Telegram</option>
+              <option value="whatsapp">WhatsApp</option>
+            </select>
           </div>
           <div className="form-group">
             <label className="form-label">AI Prompt <span style={{fontWeight:400,textTransform:'none',color:'var(--text-faint)'}}>(optional)</span></label>
@@ -816,6 +823,13 @@ function CategoriesPage({ categories, onReload }) {
               <div className="form-group"><label className="form-label">Display Name</label><input className="form-input" value={editModal.display_name} onChange={e => setEditModal(p => ({...p, display_name: e.target.value}))}/></div>
               <div className="form-group"><label className="form-label">Telegram Bot Token</label><input className="form-input" type="password" value={editModal.bot_token || ''} onChange={e => setEditModal(p => ({...p, bot_token: e.target.value}))}/></div>
               <div className="form-group"><label className="form-label">Telegram Chat ID</label><input className="form-input" value={editModal.chat_id || ''} onChange={e => setEditModal(p => ({...p, chat_id: e.target.value}))}/></div>
+              <div className="form-group">
+                <label className="form-label">Delivery Channel</label>
+                <select className="form-input" value={editModal.delivery_channel || 'telegram'} onChange={e => setEditModal(p => ({...p, delivery_channel: e.target.value}))}>
+                  <option value="telegram">Telegram</option>
+                  <option value="whatsapp">WhatsApp</option>
+                </select>
+              </div>
               <div className="form-group"><label className="form-label">AI Prompt</label><textarea className="form-textarea" value={editModal.ai_prompt || ''} onChange={e => setEditModal(p => ({...p, ai_prompt: e.target.value}))}/></div>
             </div>
             <div className="modal-footer">
@@ -856,7 +870,7 @@ function CategoriesPage({ categories, onReload }) {
                 <Toggle checked={!!cat.is_active} onChange={() => toggleCat(cat.id, !!cat.is_active)} label={cat.is_active ? 'Active' : 'Paused'}/>
               </div>
               <div style={{fontSize:'var(--text-xs)',color:'var(--text-faint)',fontFamily:'var(--font-mono)',marginBottom:'var(--sp-3)'}}>
-                Chat: {cat.chat_id || '—'}
+                Channel: <span style={{textTransform:'capitalize'}}>{cat.delivery_channel || 'telegram'}</span> | Chat: {cat.chat_id || '—'}
               </div>
               {cat.ai_prompt && <div style={{fontSize:'var(--text-xs)',color:'var(--text-muted)',background:'var(--surface-2)',borderRadius:'var(--r-md)',padding:'var(--sp-2) var(--sp-3)',maxHeight:60,overflow:'hidden',lineHeight:1.5}}>{cat.ai_prompt.substring(0, 120)}...</div>}
               <div style={{display:'flex',gap:'var(--sp-2)',marginTop:'var(--sp-4)'}}>
