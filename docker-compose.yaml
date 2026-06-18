@@ -9,7 +9,7 @@ services:
       - cc_brief_data_test:/app/data
       - cc_brief_logs:/app/logs
     ports:
-      - "3001:3000"
+      - "3456:3000"
     environment:
       - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
       - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID}
@@ -31,7 +31,7 @@ services:
       - REDDIT_PASSWORD=${REDDIT_PASSWORD}
       - TELEGRAM_API_ID=${TELEGRAM_API_ID}
       - TELEGRAM_API_HASH=${TELEGRAM_API_HASH}
-      - FLARESOLVERR_URL=${FLARESOLVERR_URL:-http://flaresolverr:8191/v1}
+      - FLARESOLVERR_URL=${FLARESOLVERR_URL:-http://flaresolverr:8291/v1}
       - TELEGRAM_PROXY=socks5://warp-proxy:9091
     logging:
       driver: "json-file"
@@ -56,7 +56,7 @@ services:
       - CAPTCHA_SOLVER=none
       - TZ=${TZ:-Asia/Kolkata}
     ports:
-      - "8191:8191"
+      - "8291:8191"
     restart: unless-stopped
 
   warp-proxy:
