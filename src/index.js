@@ -686,7 +686,7 @@ async function main() {
 
   const whatsapp = new WhatsAppListener(database, sendSystemAlert);
   const telegramUser = new TelegramUserListener(database, sendSystemAlert);
-  const scheduler = new Scheduler(summarizer, botInstances, database);
+  const scheduler = new Scheduler(summarizer, botInstances, database, whatsapp);
 
   // Global restart function for critical failures
   global.restartWhatsApp = async (force = false) => {

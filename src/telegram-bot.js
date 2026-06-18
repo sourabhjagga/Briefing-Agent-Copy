@@ -15,7 +15,7 @@ function esc(str) {
 function sanitizeMarkdown(text) {
     const tagStack = [];
     // Regex to find all HTML-like tags
-    return text.replace(/<\/?[a-z][a-z0-9]*\b[^>]*>/gi, (tag, offset, string) => {
+    let result = text.replace(/<\/?[a-z][a-z0-9]*\b[^>]*>/gi, (tag, offset, string) => {
         const tagName = tag.match(/<\/?([a-z]+)/i)[1].toLowerCase();
         const isClosing = tag.startsWith('</');
 
@@ -34,6 +34,14 @@ function sanitizeMarkdown(text) {
             return tag;
         }
     });
+    
+    // Close any remaining unclosed tags at the end
+    while (tagStack.length > 0) {
+        const unclosedTag = tagStack.pop();
+        result += `</${unclosedTag}>`;
+    }
+    
+    return result;
 }
 
 const MAX_MESSAGE_LENGTH = 4096;
