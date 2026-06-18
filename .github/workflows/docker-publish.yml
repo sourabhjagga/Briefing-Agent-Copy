@@ -29,6 +29,6 @@ jobs:
           context: .
           platforms: linux/arm64
           push: true
-          tags: ${{ secrets.DOCKERHUB_USERNAME }}/briefing-agent:latest
-          cache-from: type=registry,ref=${{ secrets.DOCKERHUB_USERNAME }}/briefing-agent:buildcache-arm64
-          cache-to: type=registry,ref=${{ secrets.DOCKERHUB_USERNAME }}/briefing-agent:buildcache-arm64,mode=max
+          tags: ${{ secrets.DOCKERHUB_USERNAME }}/briefing-agent-copy:latest
+          cache-from: type=registry,ref=${{ secrets.DOCKERHUB_USERNAME }}/briefing-agent-copy:buildcache-arm64
+          cache-to: type=registry,ref=${{ secrets.DOCKERHUB_USERNAME }}/briefing-agent-copy:buildcache-arm64,mode=max
