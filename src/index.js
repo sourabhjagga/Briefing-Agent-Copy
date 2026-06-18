@@ -629,6 +629,9 @@ async function main() {
 
   const sendSystemAlert = async (message) => {
     logger.warn(`🚨 [System Alert] ${message}`);
+    const plainMessage = message.replace(/<[^>]*>/g, '');
+
+    // Send to Telegram
     const ccBotInstance = botInstances.get('cc');
     if (ccBotInstance) {
       try {
@@ -637,11 +640,37 @@ async function main() {
         logger.error(`Failed to send Telegram system alert: ${err.message}`);
       }
     }
+
+    // Send to WhatsApp Admin
+    const adminJid = process.env.WHATSAPP_ADMIN_JID;
+    if (adminJid) {
+      try {
+        await whatsapp.sendMessage(adminJid, `🚨 *Session Alert*\n\n${plainMessage}`);
+      } catch (err) {
+        logger.error(`Failed to send WhatsApp system alert: ${err.message}`);
+      }
+    }
   };
 
   const whatsapp = new WhatsAppListener(database, sendSystemAlert);
   const telegramUser = new TelegramUserListener(database, sendSystemAlert);
   const scheduler = new Scheduler(summarizer, botInstances, database);
+
+  // Global restart function for critical failures
+  global.restartWhatsApp = async (force = false) => {
+    logger.warn('🔄 Received global request to restart WhatsApp client...');
+    await whatsapp.stop();
+    if (force) {
+        const authPath = path.resolve(__dirname, '../data/baileys_auth');
+        if (fs.existsSync(authPath)) {
+            fs.rmSync(authPath, { recursive: true, force: true });
+            logger.info('🧹 Forcing clean session. Cleared baileys_auth credentials folder.');
+        }
+    }
+    setTimeout(() => {
+        whatsapp.start().catch(err => logger.error(`WhatsApp restart failed: ${err.message}`));
+    }, 5000);
+  };
 
   const forumScraper = new ForumScraper(database, sendSystemAlert);
   const dealsScraper = new DealsScraper(database, sendSystemAlert);

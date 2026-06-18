@@ -83,6 +83,7 @@ class MessageDatabase {
         chat_id TEXT,
         ai_prompt TEXT,
         is_active INTEGER DEFAULT 1,
+        delivery_channel TEXT DEFAULT 'telegram',
         created_at TEXT DEFAULT (datetime('now'))
       );
 
@@ -208,17 +209,18 @@ class MessageDatabase {
         SELECT * FROM categories WHERE slug = ?
       `),
       addCategory: this.db.prepare(`
-        INSERT INTO categories (slug, display_name, bot_token, chat_id, ai_prompt, is_active)
-        VALUES (?, ?, ?, ?, ?, 1)
+        INSERT INTO categories (slug, display_name, bot_token, chat_id, ai_prompt, is_active, delivery_channel)
+        VALUES (?, ?, ?, ?, ?, 1, ?)
         ON CONFLICT(slug) DO UPDATE SET
           display_name=excluded.display_name,
           bot_token=excluded.bot_token,
           chat_id=excluded.chat_id,
           ai_prompt=excluded.ai_prompt,
+          delivery_channel=excluded.delivery_channel,
           is_active=1
       `),
       updateCategory: this.db.prepare(`
-        UPDATE categories SET display_name=?, bot_token=?, chat_id=?, ai_prompt=?, is_active=? WHERE id=?
+        UPDATE categories SET display_name=?, bot_token=?, chat_id=?, ai_prompt=?, is_active=?, delivery_channel=? WHERE id=?
       `),
       deleteCategory: this.db.prepare(`
         DELETE FROM categories WHERE id = ? AND slug NOT IN ('cc', 'deals')
@@ -367,11 +369,11 @@ class MessageDatabase {
   getAllCategories() { return this.statements.getAllCategories.all(); }
   getActiveCategories() { return this.statements.getActiveCategories.all(); }
   getCategoryBySlug(slug) { return this.statements.getCategoryBySlug.get(slug); }
-  addCategory(slug, displayName, botToken, chatId, aiPrompt) {
-    this.statements.addCategory.run(slug, displayName, botToken || null, chatId || null, aiPrompt || null);
+  addCategory(slug, displayName, botToken, chatId, aiPrompt, deliveryChannel = 'telegram') {
+    this.statements.addCategory.run(slug, displayName, botToken || null, chatId || null, aiPrompt || null, deliveryChannel);
   }
-  updateCategory(id, displayName, botToken, chatId, aiPrompt, isActive) {
-    this.statements.updateCategory.run(displayName, botToken || null, chatId || null, aiPrompt || null, isActive ? 1 : 0, id);
+  updateCategory(id, displayName, botToken, chatId, aiPrompt, isActive, deliveryChannel = 'telegram') {
+    this.statements.updateCategory.run(displayName, botToken || null, chatId || null, aiPrompt || null, isActive ? 1 : 0, deliveryChannel, id);
   }
   deleteCategory(id) { return this.statements.deleteCategory.run(id); }
   toggleCategory(id, isActive) { this.statements.toggleCategory.run(isActive ? 1 : 0, id); }

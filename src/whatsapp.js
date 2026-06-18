@@ -71,7 +71,6 @@ class WhatsAppListener {
     try {
       const { state, saveCreds } = await useMultiFileAuthState(this.authPath);
       
-      // Fetch latest WhatsApp Web version to bypass version rejection (405) errors
       const { version, isLatest } = await fetchLatestBaileysVersion().catch((err) => {
         logger.warn(`Could not dynamically fetch WA Web version: ${err.message}. Using stable fallback.`);
         return { version: [2, 3000, 1015024227], isLatest: false };
@@ -82,16 +81,14 @@ class WhatsAppListener {
         version,
         auth: state,
         logger: pino({ level: 'silent' }),
-        printQRInTerminal: false, // Handled manually below for logs styling
+        printQRInTerminal: false,
         browser: ['Chrome (Ubuntu)', 'Chrome', '110.0.5481.177'],
         defaultQueryTimeoutMs: 60000,
         connectTimeoutMs: 60000
       });
 
-      // Listen for credentials updates to save session
       this.sock.ev.on('creds.update', saveCreds);
 
-      // Dynamically capture participating groups and channels (newsletters) from standard history sync
       this.sock.ev.on('chats.set', ({ chats }) => {
         if (chats && Array.isArray(chats)) {
           let count = 0;
@@ -132,7 +129,7 @@ class WhatsAppListener {
         }
       });
 
-      this.sock.ev.on('messaging-history.set', ({ chats, contacts }) => {
+      this.sock.ev.on('messaging-history.set', ({ chats, contacts, messages }) => {
         let count = 0;
         if (chats && Array.isArray(chats)) {
           chats.forEach(c => {
@@ -162,9 +159,27 @@ class WhatsAppListener {
           this._saveChatNameMap();
           logger.info(`📡 Synced ${count} active groups/newsletters from history sync (messaging-history.set).`);
         }
+        
+        // Process messages from history sync
+        if (messages && Array.isArray(messages)) {
+            for (const msg of messages) {
+                if (!msg.message || msg.key.fromMe) continue;
+                this._processIncomingMessage(msg).catch(err => {
+                    if (err.message.includes('Bad MAC')) {
+                        logger.error('📱 Critical WhatsApp session error (Bad MAC). Wiping session and restarting...');
+                        if (fs.existsSync(this.authPath)) {
+                            fs.rmSync(this.authPath, { recursive: true, force: true });
+                        }
+                        // This will trigger a full restart via the connection.update handler
+                        this.sock.logout();
+                    } else {
+                        logger.error(`Error processing history message: ${err.message}`);
+                    }
+                });
+            }
+        }
       });
 
-      // Listen for connection states
       this.sock.ev.on('connection.update', async (update) => {
         const { connection, lastDisconnect, qr } = update;
 
@@ -173,12 +188,18 @@ class WhatsAppListener {
           logger.info('  SCAN THIS QR CODE WITH YOUR WHATSAPP');
           logger.info('========================================');
           qrcode.generate(qr, { small: true });
+          qrcode.generate(qr, { small: true });
           this.latestQr = qr;
+
+          const adminJid = process.env.WHATSAPP_ADMIN_JID;
+          if (adminJid) {
+            this.sendMessage(adminJid, `📱 New WhatsApp QR code generated. Please scan to continue.`);
+          }
         }
 
         if (connection === 'close') {
           this.isReady = false;
-          this.latestQr = null; // Clear QR on connection close
+          this.latestQr = null;
           const statusCode = lastDisconnect?.error?.output?.statusCode;
           const errorMessage = lastDisconnect?.error?.message;
           const errorDetail = lastDisconnect?.error?.output?.payload?.error || lastDisconnect?.error?.output?.payload?.message || '';
@@ -193,7 +214,7 @@ class WhatsAppListener {
           }
 
           if (shouldReconnect) {
-            setTimeout(() => this.start(), 10000); // 10 seconds backoff
+            setTimeout(() => this.start(), 10000);
           } else {
             logger.error('‼️ WhatsApp session logged out. Automatically clearing session and generating fresh QR code...');
             try {
@@ -201,7 +222,6 @@ class WhatsAppListener {
                 fs.rmSync(this.authPath, { recursive: true, force: true });
                 logger.info('🧹 Successfully cleared baileys_auth credentials folder.');
               }
-              // Wait 5 seconds and restart socket in clean state to generate fresh QR
               setTimeout(() => {
                 logger.info('🔄 Restarting WhatsApp socket in clean state to generate fresh QR...');
                 this.start();
@@ -212,14 +232,13 @@ class WhatsAppListener {
           }
         } else if (connection === 'open') {
           this.isReady = true;
-          this.isSessionAlerted = false; // Reset alert status on successful connection
-          this.latestQr = null; // Clear QR when connected
+          this.isSessionAlerted = false;
+          this.latestQr = null;
           logger.info('✅ WhatsApp socket client successfully connected!');
           await this._discoverChats();
         }
       });
 
-      // Listen for incoming messages
       this.sock.ev.on('messages.upsert', async (upsert) => {
         const { messages, type } = upsert;
         if (type !== 'notify') return;
@@ -237,7 +256,7 @@ class WhatsAppListener {
 
     } catch (err) {
       logger.error(`Failed to start WhatsApp socket client: ${err.message}`);
-      setTimeout(() => this.start(), 30000); // Retry in 30 seconds
+      setTimeout(() => this.start(), 30000);
     }
   }
 
@@ -397,7 +416,23 @@ class WhatsAppListener {
     return Object.keys(this.chatNameMap).map(id => ({
       id,
       name: this.chatNameMap[id]
+    return Object.keys(this.chatNameMap).map(id => ({
+      id,
+      name: this.chatNameMap[id]
     }));
+  }
+
+  async sendMessage(jid, text) {
+    try {
+      if (!this.isReady) {
+        logger.warn(`WhatsApp not ready, skipping message to ${jid}`);
+        return;
+      }
+      await this.sock.sendMessage(jid, { text });
+      logger.info(`✅ Sent WhatsApp message to ${jid}`);
+    } catch (err) {
+      logger.error(`Failed to send WhatsApp message to ${jid}: ${err.message}`);
+    }
   }
 
   getStatus() {
