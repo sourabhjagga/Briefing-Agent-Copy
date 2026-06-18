@@ -153,14 +153,14 @@ function startDashboardServer(database, whatsapp, telegramUser, scheduler, summa
 
   app.post('/api/categories', async (req, res) => {
     try {
-      const { slug, display_name, bot_token, chat_id, ai_prompt } = req.body;
+      const { slug, display_name, bot_token, chat_id, ai_prompt, delivery_channel, whatsapp_target_id } = req.body;
       if (!slug || !display_name) {
         return res.status(400).json({ error: 'Missing slug or display_name' });
       }
       if (!/^[a-z0-9-]+$/.test(slug)) {
         return res.status(400).json({ error: 'Slug must be lowercase letters, numbers, and hyphens only' });
       }
-      database.addCategory(slug, display_name, bot_token, chat_id, ai_prompt);
+      database.addCategory(slug, display_name, bot_token, chat_id, ai_prompt, delivery_channel, whatsapp_target_id);
 
       if (bot_token && chat_id) {
         try {
@@ -185,7 +185,7 @@ function startDashboardServer(database, whatsapp, telegramUser, scheduler, summa
   // FIX: allow toggle-only PATCH (only is_active) without requiring display_name
   app.patch('/api/categories/:id', async (req, res) => {
     try {
-      const { display_name, bot_token, chat_id, ai_prompt, is_active } = req.body;
+      const { display_name, bot_token, chat_id, ai_prompt, is_active, delivery_channel, whatsapp_target_id } = req.body;
 
       // Toggle-only call: just flip is_active, no full update needed
       if (is_active !== undefined && !display_name && !bot_token && !chat_id && ai_prompt === undefined) {
@@ -196,8 +196,7 @@ function startDashboardServer(database, whatsapp, telegramUser, scheduler, summa
       if (!display_name) return res.status(400).json({ error: 'Missing display_name' });
       database.updateCategory(
         req.params.id, display_name, bot_token, chat_id, ai_prompt,
-        is_active !== undefined ? is_active : 1
-      );
+        is_active !== undefined ? is_active : 1, delivery_channel, whatsapp_target_id     );
 
       const updatedCat = database.getAllCategories().find(c => c.id === parseInt(req.params.id));
       if (updatedCat && bot_token && chat_id) {
