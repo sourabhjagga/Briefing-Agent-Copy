@@ -7,11 +7,61 @@
 const { Telegraf } = require('telegraf');
 const logger = require('./logger');
 
-// Escape helper to prevent Telegram HTML parse failures
 function esc(str) {
   if (!str) return '';
   return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
+
+function sanitizeMarkdown(text) {
+    const tagStack = [];
+    // Regex to find all HTML-like tags
+    return text.replace(/<\/?[a-z][a-z0-9]*\b[^>]*>/gi, (tag, offset, string) => {
+        const tagName = tag.match(/<\/?([a-z]+)/i)[1].toLowerCase();
+        const isClosing = tag.startsWith('</');
+
+        if (isClosing) {
+            // If the closing tag matches the top of the stack, pop it
+            if (tagStack.length > 0 && tagStack[tagStack.length - 1] === tagName) {
+                tagStack.pop();
+                return tag;
+            } else {
+                // Mismatched closing tag, discard it
+                return '';
+            }
+        } else {
+            // Opening tag, push to stack
+            tagStack.push(tagName);
+            return tag;
+        }
+    });
+}
+
+const MAX_MESSAGE_LENGTH = 4096;
+
+function splitMessage(text) {
+    if (text.length <= MAX_MESSAGE_LENGTH) {
+        return [text];
+    }
+
+    const chunks = [];
+    let currentChunk = "";
+
+    const lines = text.split('\n');
+    for (const line of lines) {
+        if (currentChunk.length + line.length + 1 > MAX_MESSAGE_LENGTH) {
+            chunks.push(currentChunk);
+            currentChunk = line;
+        } else {
+            currentChunk += (currentChunk.length > 0 ? "\n" : "") + line;
+        }
+    }
+    if (currentChunk.length > 0) {
+        chunks.push(currentChunk);
+    }
+
+    return chunks.map((chunk, index) => `(${index + 1}/${chunks.length})\n${chunk}`);
+}
+
 
 class TelegramBotDispatcher {
   constructor(botToken, chatId, database, summarizer, sourcePrefix = 'cc', customPrompt = undefined) {
@@ -328,8 +378,10 @@ class TelegramBotDispatcher {
 
   async sendMessage(text) {
     try {
-      const chunks = this._splitMessage(text, 4000);
-      for (const chunk of chunks) {
+      const sanitizedText = sanitizeMarkdown(text);
+      const chunks = splitMessage(sanitizedText);
+      for (let i = 0; i < chunks.length; i++) {
+        const chunk = chunks[i];
         await this.bot.telegram.sendMessage(this.chatId, chunk, {
           parse_mode: 'HTML',
           link_preview_options: { is_disabled: true }
@@ -346,7 +398,13 @@ class TelegramBotDispatcher {
       // Fallback to pure text strip if HTML is corrupted
       try {
         const plain = text.replace(/<[^>]*>/g, '');
-        await this.bot.telegram.sendMessage(this.chatId, plain);
+        const chunks = splitMessage(plain);
+        for (const chunk of chunks) {
+            await this.bot.telegram.sendMessage(this.chatId, chunk);
+            if (chunks.length > 1) {
+                await new Promise(r => setTimeout(r, 800));
+            }
+        }
         logger.info('✅ Dispatched Telegram message via plain text fallback successfully.');
         return true;
       } catch (fallbackErr) {
@@ -373,77 +431,7 @@ class TelegramBotDispatcher {
     return this.sendMessage(msg);
   }
 
-  _splitMessage(text, maxLen = 4000) {
-    if (text.length <= maxLen) return [text];
-    
-    const chunks = [];
-    // Split by major paragraph sections starting with icons
-    const paragraphs = text.split(/\n+(?=(?:🚀|💡|🔓|📊|🤖|🎥|🔥|💰|📝|🔗|📅|📌))/);
-    
-    let currentChunk = '';
-    for (const para of paragraphs) {
-      if ((currentChunk + para).length > maxLen) {
-        if (currentChunk.trim()) {
-          chunks.push(currentChunk.trim());
-          currentChunk = '';
-        }
-        
-        // Handle giant paragraphs (split strictly by lines)
-        if (para.length > maxLen) {
-          const lines = para.split('\n');
-          for (const line of lines) {
-            if ((currentChunk + '\n' + line).length > maxLen) {
-              chunks.push(currentChunk.trim());
-              currentChunk = line;
-            } else {
-              currentChunk = currentChunk ? currentChunk + '\n' + line : line;
-            }
-          }
-        } else {
-          currentChunk = para;
-        }
-      } else {
-        currentChunk = currentChunk ? currentChunk + '\n\n' + para : para;
-      }
-    }
-    
-    if (currentChunk.trim()) {
-      chunks.push(currentChunk.trim());
-    }
-    
-    return chunks.map(chunk => this._balanceTags(chunk));
-  }
 
-  _balanceTags(html) {
-    const regex = /<\/?([a-zA-Z0-9]+)\b[^>]*>/g;
-    let match;
-    const stack = [];
-    const safeTags = ['b', 'i', 'code', 'u', 's', 'a'];
-
-    while ((match = regex.exec(html)) !== null) {
-      const fullTag = match[0];
-      const tagName = match[1].toLowerCase();
-      
-      if (!safeTags.includes(tagName)) continue;
-
-      const isClose = fullTag.startsWith('</');
-      if (isClose) {
-        if (stack.length > 0 && stack[stack.length - 1] === tagName) {
-          stack.pop();
-        }
-      } else {
-        stack.push(tagName);
-      }
-    }
-
-    let balanced = html;
-    // Close any tags left open at the end
-    while (stack.length > 0) {
-      const tagName = stack.pop();
-      balanced += `</${tagName}>`;
-    }
-    return balanced;
-  }
 
   async stop() {
     this.bot.stop();
