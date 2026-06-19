@@ -14,6 +14,16 @@
 </head>
 <body>
   <div id="root">Loading...</div>
+  <script>
+    // If the dashboard hasn't become interactive within 3 seconds, show an error
+    setTimeout(() => {
+      const root = document.getElementById('root');
+      if (root && root.textContent.trim() === 'Loading...') {
+        root.textContent = 'Error: Dashboard failed to load. Check console for details.';
+        root.style.color = 'red';
+      }
+    }, 3000);
+  </script>
   <script src="app.min.js"></script>
 </body>
 </html>
