@@ -220,6 +220,9 @@ class MessageDatabase {
       toggleSource: this.db.prepare(`
         UPDATE sources SET is_active = ? WHERE id = ?
       `),
+      updateSourceType: this.db.prepare(`
+        UPDATE sources SET type = ? WHERE id = ?
+      `),
       deleteSource: this.db.prepare(`
         DELETE FROM sources WHERE id = ?
       `),
@@ -390,6 +393,7 @@ class MessageDatabase {
   addSource(name, sourceId, type) { this.statements.addSource.run(name, sourceId, type); }
   addSourceInactive(name, sourceId, type) { this.statements.addSourceInactive.run(name, sourceId, type); }
   toggleSource(id, isActive) { this.statements.toggleSource.run(isActive ? 1 : 0, id); }
+  updateSourceType(id, type) { this.statements.updateSourceType.run(type, id); }
   deleteSource(id) { this.statements.deleteSource.run(id); }
   getAllCategories() { return this.statements.getAllCategories.all(); }
   getActiveCategories() { return this.statements.getActiveCategories.all(); }

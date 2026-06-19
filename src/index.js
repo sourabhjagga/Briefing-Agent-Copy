@@ -134,8 +134,13 @@ function startDashboardServer(database, whatsapp, telegramUser, scheduler, summa
 
   app.patch('/api/sources/:id', (req, res) => {
     try {
-      const { is_active } = req.body;
-      database.toggleSource(req.params.id, is_active);
+      const { is_active, type } = req.body;
+      if (is_active !== undefined) {
+        database.toggleSource(req.params.id, is_active);
+      }
+      if (type !== undefined) {
+        database.updateSourceType(req.params.id, type);
+      }
       res.json({ success: true });
     } catch (err) {
       res.status(500).json({ error: err.message });

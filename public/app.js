@@ -26,6 +26,7 @@ const Icon = ({ name, size = 18 }) => {
     bolt:      <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>,
     menu:      <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/></svg>,
     test:      <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>,
+    telegram:  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 10c0 7-9 20-9 20s-9-13-9-20a9 9 0 0 1 18 0z"/><path d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z"/></svg>,
   };
   return icons[name] || null;
 };
@@ -483,11 +484,68 @@ function AddSourceModal({ onClose, onSaved }) {
   );
 }
 
+function EditSourceModal({ source, categories, onClose, onSaved }) {
+  const [editedSource, setEditedSource] = useState(source);
+  const [saving, setSaving] = useState(false);
+  const [alert, setAlert] = useState(null);
+
+  const allTypeOptions = buildSourceTypes(categories);
+
+  const handleSave = async () => {
+    if (!editedSource.type) {
+      setAlert({ type: 'error', msg: 'Source type is required.' });
+      return;
+    }
+    setSaving(true);
+    try {
+      const res = await api.patch(`/api/sources/${editedSource.id}`, { type: editedSource.type });
+      if (res.error) throw new Error(res.error);
+      onSaved();
+    } catch(e) { setAlert({ type: 'error', msg: e.message }); }
+    finally { setSaving(false); }
+  };
+
+  return (
+    <div className="modal-backdrop" onClick={e => e.target === e.currentTarget && onClose()}>
+      <div className="modal">
+        <div className="modal-header">
+          <span className="modal-title">Edit Source — {source.name}</span>
+          <button className="btn btn-ghost btn-icon btn-sm" onClick={onClose}><Icon name="close"/></button>
+        </div>
+        <div className="modal-body">
+          {alert && <Alert type={alert.type} onClose={() => setAlert(null)}>{alert.msg}</Alert>}
+          <div className="form-group">
+            <label className="form-label">Name</label>
+            <input className="form-input" value={editedSource.name} disabled readOnly/>
+          </div>
+          <div className="form-group">
+            <label className="form-label">Source ID</label>
+            <input className="form-input" value={editedSource.source_id} disabled readOnly/>
+          </div>
+          <div className="form-group">
+            <label className="form-label">Type</label>
+            <select className="form-select" value={editedSource.type} onChange={e => setEditedSource(p => ({...p, type: e.target.value}))}>
+              <option value="">Select type...</option>
+              {allTypeOptions.map(t => <option key={t} value={t}>{t}</option>)}
+            </select>
+            <div className="form-hint">Format: {'{category-slug}'}-{'{platform}'} &nbsp;·&nbsp; Platforms: whatsapp, telegram, reddit, youtube, forum</div>
+          </div>
+        </div>
+        <div className="modal-footer">
+          <button className="btn btn-secondary" onClick={onClose}>Cancel</button>
+          <button className="btn btn-primary" onClick={handleSave} disabled={saving}>{saving ? <Spinner/> : <><Icon name="check" size={16}/>Save Source</>}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function SourcesPage({ sources, categories, onReload }) {
   const [filter, setFilter] = useState('');
   const [typeFilter, setTypeFilter] = useState('all');
   const [alert, setAlert] = useState(null);
   const [showAddModal, setShowAddModal] = useState(false);
+  const [editSourceModal, setEditSourceModal] = useState(null);
 
   const filterTypes = ['all', ...Array.from(new Set(sources.map(s => s.type)))];
   const filtered = sources.filter(s => {
@@ -525,6 +583,19 @@ function SourcesPage({ sources, categories, onReload }) {
         />
       )}
 
+      {editSourceModal && (
+        <EditSourceModal
+          source={editSourceModal}
+          categories={categories}
+          onClose={() => setEditSourceModal(null)}
+          onSaved={() => {
+            setEditSourceModal(null);
+            setAlert({ type: 'success', msg: 'Source updated successfully.' });
+            onReload();
+          }}
+        />
+      )}
+
       <div style={{display:'flex',gap:'var(--sp-3)',marginBottom:'var(--sp-5)',flexWrap:'wrap'}}>
         <input className="form-input" style={{maxWidth:260}} placeholder="Search sources..." value={filter} onChange={e => setFilter(e.target.value)}/>
         <select className="form-select" style={{maxWidth:200}} value={typeFilter} onChange={e => setTypeFilter(e.target.value)}>
@@ -547,7 +618,12 @@ function SourcesPage({ sources, categories, onReload }) {
                   <td className="td-mono truncate">{s.source_id}</td>
                   <td><span className={`badge ${typeBadgeClass(s.type)}`}>{s.type}</span></td>
                   <td><Toggle checked={!!s.is_active} onChange={() => toggle(s.id, !!s.is_active)}/></td>
-                  <td><button className="btn btn-danger btn-icon btn-sm" onClick={() => remove(s.id)} title="Remove"><Icon name="trash" size={14}/></button></td>
+                  <td>
+                    <div style={{display:'flex',gap:'var(--sp-2)'}}>
+                      <button className="btn btn-secondary btn-icon btn-sm" onClick={() => setEditSourceModal(s)} title="Edit"><Icon name="edit" size={14}/></button>
+                      <button className="btn btn-danger btn-icon btn-sm" onClick={() => remove(s.id)} title="Remove"><Icon name="trash" size={14}/></button>
+                    </div>
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -689,6 +765,296 @@ function CookiesPage() {
   );
 }
 
+// ---- COOKIES PAGE ---- //
+function CookiesPage() {
+  const [cookies, setCookies] = useState({});
+  const [loading, setLoading] = useState(true);
+  const [alert, setAlert] = useState(null);
+  const [dragOver, setDragOver] = useState(null);
+
+  const SITES = [
+    { key: 'youtube',     label: 'YouTube',     icon: '🎥', hint: 'Export with EditThisCookie or Get cookies.txt extension. Required to bypass yt-dlp bot detection.' },
+    { key: 'reddit',      label: 'Reddit',      icon: '🤖', hint: 'Export cookies from reddit.com after login. Helps access Reddit API as a logged-in user.' },
+    { key: 'technofino',  label: 'Technofino',  icon: '🌐', hint: 'Login to technofino.com, then export cookies to unlock VIP Lounge and CC Hub threads.' },
+    { key: 'desidime',    label: 'DesiDime',    icon: '🛡️', hint: 'Export cookies if DesiDime requires login for VIP sections.' },
+  ];
+
+  const loadCookies = async () => {
+    try {
+      const data = await api.get('/api/cookies');
+      const map = {};
+      for (const item of data) map[item.site] = item;
+      setCookies(map);
+    } catch(e) { console.error('Failed to load cookies', e); }
+    finally { setLoading(false); }
+  };
+
+  useEffect(() => { loadCookies(); }, []);
+
+  const handleFileSelect = async (site, file) => {
+    if (!file) return;
+    try {
+      const text = await file.text();
+      let parsed;
+
+      const trimmed = text.trim();
+      if (trimmed.startsWith('[') || trimmed.startsWith('{')) {
+        try {
+          parsed = JSON.parse(trimmed);
+          if (!Array.isArray(parsed)) parsed = [parsed];
+        } catch (_) {
+          parsed = null;
+        }
+      }
+
+      if (!parsed) {
+        parsed = text
+          .replace(/\r\n/g, '\n')
+          .replace(/\r/g, '\n')
+          .split('\n')
+          .filter(l => l.trim() && !l.startsWith('#'))
+          .map(line => {
+            const parts = line.split('\t');
+            if (parts.length < 7) return null;
+            const [domain, , path, , expires, name, value] = parts;
+            if (!name || !name.trim()) return null;
+            return { domain: domain.trim(), path: path.trim(), name: name.trim(), value: (value || '').trim(), expires: parseInt(expires) || 0 };
+          })
+          .filter(Boolean);
+      }
+
+      if (!Array.isArray(parsed) || parsed.length === 0) {
+        throw new Error('No valid cookies found. Make sure you exported a Netscape cookies.txt or EditThisCookie JSON file.');
+      }
+
+      const res = await api.post('/api/cookies', { site, cookies: parsed });
+      if (res.error) throw new Error(res.error);
+      setAlert({ type: 'success', msg: `✅ ${parsed.length} cookies saved for ${site}!` });
+      loadCookies();
+    } catch(e) { setAlert({ type: 'error', msg: e.message }); }
+  };
+
+  const deleteCookies = async (site) => {
+    if (!confirm(`Delete cookies for ${site}?`)) return;
+    await api.delete(`/api/cookies/${site}`);
+    setAlert({ type: 'success', msg: `Cookies cleared for ${site}.` });
+    loadCookies();
+  };
+
+  if (loading) return <div style={{display:'flex',justifyContent:'center',padding:'var(--sp-16)'}}><Spinner/></div>;
+
+  return (
+    <div>
+      {alert && <Alert type={alert.type} onClose={() => setAlert(null)}>{alert.msg}</Alert>}
+      <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(320px,1fr))',gap:'var(--sp-5)'}}>
+        {SITES.map(site => (
+          <div key={site.key} className="card">
+            <div className="card-header">
+              <span style={{fontSize:'1.25rem'}}>{site.icon}</span>
+              <span className="card-title">{site.label}</span>
+              {cookies[site.key] && cookies[site.key].has_cookies && (
+                <span className="badge badge-green" style={{marginLeft:'auto'}}>Loaded</span>
+              )}
+            </div>
+            <div className="card-body">
+              {cookies[site.key] && cookies[site.key].has_cookies && cookies[site.key].updated_at && (
+                <div style={{marginBottom:'var(--sp-3)',fontSize:'var(--text-xs)',color:'var(--text-muted)',fontFamily:'var(--font-mono)'}}>
+                  Updated: {new Date(cookies[site.key].updated_at).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}
+                </div>
+              )}
+              <label
+                className={`cookie-drop-zone ${dragOver === site.key ? 'drag-over' : ''}`}
+                onDragOver={e => { e.preventDefault(); setDragOver(site.key); }}
+                onDragLeave={() => setDragOver(null)}
+                onDrop={e => { e.preventDefault(); setDragOver(null); handleFileSelect(site.key, e.dataTransfer.files[0]); }}
+              >
+                <input type="file" accept=".txt,.json" style={{display:'none'}} onChange={e => handleFileSelect(site.key, e.target.files[0])}/>
+                <div className="cookie-drop-zone-icon">🍪</div>
+                <div className="cookie-drop-zone-text">Drop cookie file or click to browse</div>
+                <div className="cookie-drop-zone-sub">{site.hint}</div>
+              </label>
+              {cookies[site.key] && cookies[site.key].has_cookies && (
+                <button className="btn btn-danger btn-sm" style={{marginTop:'var(--sp-3)',width:'100%'}} onClick={() => deleteCookies(site.key)}>
+                  <Icon name="trash" size={14}/>Clear Cookies
+                </button>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ---- TELEGRAM PAGE ---- //
+function TelegramPage() {
+  const [status, setStatus] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [alert, setAlert] = useState(null);
+  const [phoneNumber, setPhoneNumber] = useState('');
+  const [code, setCode] = useState('');
+  const [password, setPassword] = useState('');
+  const [showCodeInput, setShowCodeInput] = useState(false);
+  const [showPasswordInput, setShowPasswordInput] = useState(false);
+  const [discoveryChannels, setDiscoveryChannels] = useState([]);
+  const [discoveryLoading, setDiscoveryLoading] = useState(false);
+
+  const loadStatus = async () => {
+    try {
+      const data = await api.get('/api/telegram/status');
+      setStatus(data);
+      if (data.tempPhone) {
+        setPhoneNumber(data.tempPhone);
+        setShowCodeInput(true);
+      } else {
+        setShowCodeInput(false);
+        setPhoneNumber('');
+      }
+    } catch (e) {
+      setAlert({ type: 'error', msg: e.message });
+      setStatus(null);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { loadStatus(); }, []);
+
+  const sendCode = async () => {
+    setLoading(true);
+    try {
+      await api.post('/api/telegram/send-code', { phoneNumber });
+      setAlert({ type: 'success', msg: `Code sent to ${phoneNumber}.` });
+      setShowCodeInput(true);
+    } catch (e) {
+      setAlert({ type: 'error', msg: e.message });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const submitCode = async () => {
+    setLoading(true);
+    try {
+      await api.post('/api/telegram/submit-code', { code, password });
+      setAlert({ type: 'success', msg: 'Successfully logged in to Telegram!' });
+      setShowCodeInput(false);
+      setShowPasswordInput(false);
+      setPassword('');
+      loadStatus();
+    } catch (e) {
+      if (e.message.includes('password is required')) {
+        setAlert({ type: 'warning', msg: 'Two-Factor Authentication is enabled. Please enter your cloud password.' });
+        setShowPasswordInput(true);
+      } else {
+        setAlert({ type: 'error', msg: e.message });
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const logout = async () => {
+    if (!confirm('Logout from Telegram personal account?')) return;
+    setLoading(true);
+    try {
+      await api.post('/api/telegram/logout');
+      setAlert({ type: 'success', msg: 'Logged out from Telegram.' });
+      loadStatus();
+    } catch (e) {
+      setAlert({ type: 'error', msg: e.message });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const discoverChannels = async () => {
+    setDiscoveryLoading(true);
+    try {
+      const channels = await api.get('/api/telegram/discover');
+      setDiscoveryChannels(channels);
+    } catch (e) {
+      setAlert({ type: 'error', msg: e.message });
+    } finally {
+      setDiscoveryLoading(false);
+    }
+  };
+
+  const addTelegramSource = async (channel) => {
+    if (!confirm(`Add "${channel.name}" as a source?`)) return;
+    try {
+      await api.post('/api/sources', {
+        name: channel.name,
+        source_id: channel.id,
+        type: `telegram-user` // Default to generic telegram-user
+      });
+      setAlert({ type: 'success', msg: `Source "${channel.name}" added.` });
+    } catch (e) {
+      setAlert({ type: 'error', msg: e.message });
+    }
+  };
+
+  if (loading) return <div style={{display:'flex',justifyContent:'center',padding:'var(--sp-16)'}}><Spinner/></div>;
+
+  return (
+    <div>
+      {alert && <Alert type={alert.type} onClose={() => setAlert(null)}>{alert.msg}</Alert>}
+      <div className="card">
+        <div className="card-header"><span className="card-title">Telegram Personal Account</span></div>
+        <div className="card-body">
+          {status && status.isReady ? (
+            <>
+              <Alert type="success">✅ Connected to Telegram personal account.</Alert>
+              <div style={{marginTop:'var(--sp-3)'}}>
+                <button className="btn btn-secondary" onClick={discoverChannels} disabled={discoveryLoading}><Icon name="refresh" size={14}/> Discover Channels</button>
+                <button className="btn btn-danger" onClick={logout} disabled={loading} style={{marginLeft:'var(--sp-2)'}}>Logout</button>
+              </div>
+
+              {discoveryChannels.length > 0 && (
+                <div style={{marginTop:'var(--sp-5)'}}>
+                  <div className="card-title">Discovered Channels</div>
+                  {discoveryChannels.map(channel => (
+                    <div key={channel.id} style={{display:'flex',alignItems:'center',gap:'var(--sp-3)',padding:'var(--sp-3) var(--sp-2)',borderBottom:'1px solid var(--border)'}}>
+                      <span style={{flex:1,fontSize:'var(--text-sm)'}}>{channel.name}</span>
+                      <span className="badge badge-accent" style={{fontFamily:'var(--font-mono)'}}>{channel.id}</span>
+                      <button className="btn btn-primary btn-sm" onClick={() => addTelegramSource(channel)}><Icon name="plus" size={14}/>Add Source</button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </>
+          ) : (
+            <div>
+              <Alert type="info">Not connected to Telegram personal account.</Alert>
+              <div className="form-group" style={{marginTop:'var(--sp-3)'}}>
+                <label className="form-label">Phone Number (International format)</label>
+                <input className="form-input" placeholder="+911234567890" value={phoneNumber} onChange={e => setPhoneNumber(e.target.value)} disabled={showCodeInput}/>
+              </div>
+              {!showCodeInput ? (
+                <button className="btn btn-primary" onClick={sendCode} disabled={loading || !phoneNumber.trim()}>Send Code</button>
+              ) : (
+                <>
+                  <div className="form-group">
+                    <label className="form-label">Verification Code</label>
+                    <input className="form-input" placeholder="e.g., 12345" value={code} onChange={e => setCode(e.target.value)} />
+                  </div>
+                  {showPasswordInput && (
+                    <div className="form-group">
+                      <label className="form-label">Cloud Password</label>
+                      <input className="form-input" type="password" value={password} onChange={e => setPassword(e.target.value)} />
+                    </div>
+                  )}
+                  <button className="btn btn-primary" onClick={submitCode} disabled={loading || !code.trim() || (showPasswordInput && !password.trim())}>Submit Code</button>
+                </>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ---- CATEGORIES PAGE ---- //
 function isValidWhatsAppJid(jid) {
   if (!jid || jid.trim() === '') return true;
@@ -778,8 +1144,7 @@ function CategoriesPage({ categories, onReload, whatsappStatus }) {
   const [testing, setTesting] = useState(null);
 
   const toggleCat = async (id, current) => {
-    await api.patch(`/api/categories/${id}`, {
-      display_name: categories.find(c => c.id === id)?.display_name || '',
+    await api.patch(`/api/categories/${id}/toggle`, {
       is_active: !current
     });
     onReload();
@@ -1025,6 +1390,17 @@ function App() {
           ))}
         </nav>
 
+        <div className="sidebar-section-label">ACCOUNT</div>
+        <nav className="sidebar-nav">
+          <button
+            className={`nav-item ${page === 'telegram' ? 'active' : ''}`}
+            onClick={() => { setPage('telegram'); setSidebarOpen(false); }}
+          >
+            <Icon name="telegram" size={16}/>
+            Telegram Personal
+          </button>
+        </nav>
+
         <div className="sidebar-bottom">
           <button className="btn btn-ghost" style={{width:'100%',justifyContent:'flex-start',gap:'var(--sp-2)',fontSize:'var(--text-sm)'}} onClick={toggleTheme}>
             <Icon name={theme === 'dark' ? 'sun' : 'moon'} size={16}/>
@@ -1058,6 +1434,7 @@ function App() {
           {page === 'sources'    && <SourcesPage    sources={sources} categories={categories} onReload={loadAll} />}
           {page === 'categories' && <CategoriesPage categories={categories} onReload={loadAll} whatsappStatus={health.find(h => h.whatsapp)?.whatsapp || {}} />}
           {page === 'cookies'    && <CookiesPage />}
+          {page === 'telegram'   && <TelegramPage />}
           {page === 'health'     && (
             <div className="card">
               <div className="card-header"><span className="card-title">Scraper Health Feed</span></div>
