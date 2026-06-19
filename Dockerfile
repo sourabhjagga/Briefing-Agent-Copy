@@ -62,7 +62,8 @@ COPY --from=builder /app/package.json ./package.json
 
 # Copy clean-slate source files and static assets
 COPY src/ ./src
-COPY public/ ./public
+RUN mkdir /app/public
+COPY public/ /app/public
 
 # Create data directories and set correct permissions
 RUN mkdir -p data logs && \
