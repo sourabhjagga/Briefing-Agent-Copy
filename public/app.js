@@ -116,11 +116,11 @@ async function fetchCookieSites() {
   sitesDiv.innerHTML = '';
   data.forEach(s => {
     const d = document.createElement('div');
-    d.innerHTML = \`
-      <h4>\${s.site}</h4>
-      <p>Has Cookies: \${s.has_cookies}</p>
-      <button onclick="showCookiePasteForm('\${s.site}')">Paste Cookies</button>
-    \`;
+    d.innerHTML = `
+      <h4>${s.site}</h4>
+      <p>Has Cookies: ${s.has_cookies}</p>
+      <button onclick="showCookiePasteForm('${s.site}')">Paste Cookies</button>
+    `;
     sitesDiv.appendChild(d);
   });
 }
@@ -152,7 +152,7 @@ async function submitCookies() {
 
 function showSection(id) {
   document.querySelectorAll('main section').forEach(s => s.style.display = 'none');
-  const target = document.getElementById(\`\${id}-section\`);
+  const target = document.getElementById(`${id}-section`);
   if (target) target.style.display = 'block';
   
   if (id === 'health') fetchHealthStatus();
@@ -163,7 +163,7 @@ function showSection(id) {
 function renderDashboard() {
   const root = document.getElementById('root');
   if (!root) return;
-  root.innerHTML = \`
+  root.innerHTML = `
     <header>
       <h1>Brief Agent Dashboard</h1>
       <nav>
@@ -198,7 +198,7 @@ function renderDashboard() {
         </div>
       </section>
     </main>
-  \`;
+  `;
   
   window.showSection = showSection;
   window.sendTelegramCode = sendTelegramCode;

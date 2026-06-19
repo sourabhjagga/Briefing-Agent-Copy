@@ -6,7 +6,7 @@
   "scripts": {
     "start": "node src/index.js",
     "dev": "node src/index.js",
-    "build": "esbuild public/app.js --bundle --minify --outfile=public/app.min.js --loader:.js=jsx"
+    "build": "esbuild public/app.js --bundle --minify --outfile=public/app.min.js"
   },
   "keywords": [
     "credit-cards",
