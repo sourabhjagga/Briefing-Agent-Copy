@@ -540,11 +540,136 @@ function EditSourceModal({ source, categories, onClose, onSaved }) {
   );
 }
 
+function DiscoverWhatsappModal({ existingSources, categories, onClose, onSaved }) {
+  const [discoveredChats, setDiscoveredChats] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [alert, setAlert] = useState(null);
+  const [addingIds, setAddingIds] = useState(new Set());
+
+  // Local state to store category selection for each chat ID
+  const [selectedCategories, setSelectedCategories] = useState({});
+
+  useEffect(() => {
+    const fetchChats = async () => {
+      try {
+        const chats = await api.get('/api/whatsapp/discover');
+        setDiscoveredChats(chats);
+      } catch (e) {
+        setAlert({ type: 'error', msg: 'Failed to discover WhatsApp chats. Make sure WhatsApp is connected via QR scan.' });
+      } finally {
+        setLoading(false);
+      }
+    };
+    fetchChats();
+  }, []);
+
+  const handleAdd = async (chat) => {
+    const categorySlug = selectedCategories[chat.id];
+    if (!categorySlug) {
+      setAlert({ type: 'error', msg: `Please select a category for ${chat.name} before adding.` });
+      return;
+    }
+    
+    setAddingIds(prev => new Set(prev).add(chat.id));
+    setAlert(null);
+    try {
+      await api.post('/api/sources', {
+        name: chat.name,
+        source_id: chat.id,
+        type: `${categorySlug}-whatsapp`
+      });
+      onSaved();
+      setAlert({ type: 'success', msg: `Added ${chat.name} as a source.` });
+    } catch (e) {
+      setAlert({ type: 'error', msg: e.message });
+    } finally {
+      setAddingIds(prev => { const next = new Set(prev); next.delete(chat.id); return next; });
+    }
+  };
+
+  const handleCategoryChange = (chatId, slug) => {
+    setSelectedCategories(prev => ({ ...prev, [chatId]: slug }));
+  };
+
+  // Filter to show only channels/groups and exclude already added sources
+  const existingSourceIds = new Set(existingSources.map(s => s.source_id.toLowerCase()));
+  const availableChats = discoveredChats.filter(c => {
+    const idLower = c.id.toLowerCase();
+    const isGroupOrChannel = idLower.includes('@g.us') || idLower.includes('@newsletter');
+    return isGroupOrChannel && !existingSourceIds.has(idLower);
+  });
+
+  return (
+    <div className="modal-backdrop" onClick={e => e.target === e.currentTarget && onClose()}>
+      <div className="modal" style={{ maxWidth: '800px', width: '90%' }}>
+        <div className="modal-header">
+          <span className="modal-title">Discover WhatsApp Chats</span>
+          <button className="btn btn-ghost btn-icon btn-sm" onClick={onClose}><Icon name="close"/></button>
+        </div>
+        <div className="modal-body" style={{ maxHeight: '60vh', overflowY: 'auto' }}>
+          {alert && <Alert type={alert.type} onClose={() => setAlert(null)}>{alert.msg}</Alert>}
+          
+          {loading ? (
+            <div style={{ display: 'flex', justifyContent: 'center', padding: 'var(--sp-8)' }}><Spinner/></div>
+          ) : availableChats.length === 0 ? (
+            <div className="empty-state">
+              <div className="empty-state-icon">📱</div>
+              <h3>No new chats found</h3>
+              <p>All discovered groups and channels are already added as sources, or WhatsApp is not connected.</p>
+            </div>
+          ) : (
+            <div className="table-wrap">
+              <table>
+                <thead><tr>
+                  <th>Name</th>
+                  <th>ID</th>
+                  <th>Category</th>
+                  <th style={{ width: '100px' }}>Action</th>
+                </tr></thead>
+                <tbody>
+                  {availableChats.map(chat => (
+                    <tr key={chat.id}>
+                      <td style={{ fontWeight: 500 }}>{chat.name}</td>
+                      <td className="td-mono truncate" style={{ maxWidth: '150px' }}>{chat.id}</td>
+                      <td>
+                        <select 
+                          className="form-select" 
+                          value={selectedCategories[chat.id] || ''} 
+                          onChange={(e) => handleCategoryChange(chat.id, e.target.value)}
+                        >
+                          <option value="">Select Category...</option>
+                          {categories.filter(c => c.is_active).map(c => (
+                            <option key={c.slug} value={c.slug}>{c.display_name}</option>
+                          ))}
+                        </select>
+                      </td>
+                      <td>
+                        <button 
+                          className="btn btn-primary btn-sm" 
+                          disabled={addingIds.has(chat.id)}
+                          onClick={() => handleAdd(chat)}
+                        >
+                          {addingIds.has(chat.id) ? <Spinner/> : <><Icon name="plus" size={14}/> Add</>}
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function SourcesPage({ sources, categories, onReload }) {
   const [filter, setFilter] = useState('');
   const [typeFilter, setTypeFilter] = useState('all');
   const [alert, setAlert] = useState(null);
   const [showAddModal, setShowAddModal] = useState(false);
+  const [showDiscoverModal, setShowDiscoverModal] = useState(false);
   const [editSourceModal, setEditSourceModal] = useState(null);
 
   const filterTypes = ['all', ...Array.from(new Set(sources.map(s => s.type)))];
@@ -596,15 +721,32 @@ function SourcesPage({ sources, categories, onReload }) {
         />
       )}
 
+      {showDiscoverModal && (
+        <DiscoverWhatsappModal
+          existingSources={sources}
+          categories={categories}
+          onClose={() => setShowDiscoverModal(false)}
+          onSaved={() => onReload()}
+        />
+      )}
+
       <div style={{display:'flex',gap:'var(--sp-3)',marginBottom:'var(--sp-5)',flexWrap:'wrap'}}>
         <input className="form-input" style={{maxWidth:260}} placeholder="Search sources..." value={filter} onChange={e => setFilter(e.target.value)}/>
         <select className="form-select" style={{maxWidth:200}} value={typeFilter} onChange={e => setTypeFilter(e.target.value)}>
           {filterTypes.map(t => <option key={t} value={t}>{t === 'all' ? 'All Types' : t}</option>)}
         </select>
-        <button className="btn btn-primary" style={{marginLeft:'auto'}} onClick={() => setShowAddModal(true)}><Icon name="plus" size={16}/>Add Source</button>
+        <div style={{marginLeft:'auto',display:'flex',gap:'var(--sp-2)'}}>
+          <button className="btn btn-secondary" onClick={() => setShowDiscoverModal(true)}><Icon name="refresh" size={16}/>Discover WhatsApp</button>
+          <button className="btn btn-primary" onClick={() => setShowAddModal(true)}><Icon name="plus" size={16}/>Add Source</button>
+        </div>
       </div>
       {filtered.length === 0 ? (
-        <div className="empty-state"><div className="empty-state-icon">📦</div><h3>No sources found</h3><p>Add your first source or adjust filters.</p><button className="btn btn-primary" onClick={() => setShowAddModal(true)}><Icon name="plus" size={16}/>Add Source</button></div>
+        <div className="empty-state"><div className="empty-state-icon">📦</div><h3>No sources found</h3><p>Add your first source or adjust filters.</p>
+          <div style={{display:'flex',gap:'var(--sp-3)',marginTop:'var(--sp-3)',justifyContent:'center'}}>
+            <button className="btn btn-secondary" onClick={() => setShowDiscoverModal(true)}><Icon name="refresh" size={16}/>Discover WhatsApp</button>
+            <button className="btn btn-primary" onClick={() => setShowAddModal(true)}><Icon name="plus" size={16}/>Add Source</button>
+          </div>
+        </div>
       ) : (
         <div className="table-wrap">
           <table>
