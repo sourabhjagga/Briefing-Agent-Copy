@@ -317,84 +317,57 @@ class WhatsAppListener {
   async _discoverChats() {
     logger.info('🔍 Syncing WhatsApp participating chats...');
     try {
-      // In Baileys, we read contacts and groups dynamically.
       const groups = await this.sock.groupFetchAllParticipating();
-      const map = {};
-      
       Object.keys(groups).forEach(id => {
-        const name = groups[id].subject;
-        map[id.toLowerCase()] = name;
-        this.chatNameMap[id.toLowerCase()] = name;
+        this.chatNameMap[id.toLowerCase()] = groups[id].subject;
       });
-
       this._saveChatNameMap();
       logger.info(`✅ Synced ${Object.keys(groups).length} participating groups from account.`);
 
-      // Sync subscribed newsletters/channels (e.g. @newsletter JIDs)
       try {
         logger.info('🔍 Fetching subscribed WhatsApp newsletters/channels...');
-        // Try multiple Baileys API variants for newsletter discovery
         let newsletters = null;
-        
-        // Method 1: newsletterGetSubscribed (Baileys 6.7+)
         if (typeof this.sock.newsletterGetSubscribed === 'function') {
           newsletters = await this.sock.newsletterGetSubscribed();
-        }
-        // Method 2: Direct WA query for newsletter list
-        else if (typeof this.sock.query === 'function') {
-          try {
-            const result = await this.sock.query({
-              tag: 'iq',
-              attrs: { to: '@s.whatsapp.net', xmlns: 'w:mex', type: 'get' },
-              content: [{ tag: 'query', attrs: {}, content: [{ tag: 'list_type', attrs: { v: '2' } }] }]
-            });
-            if (result && result.content) {
-              newsletters = result.content.map(c => ({
-                id: c.attrs?.id || c.attrs?.jid,
-                name: c.attrs?.name || c.attrs?.subject || 'WhatsApp Channel'
-              })).filter(n => n.id);
-            }
-          } catch (queryErr) {
-            logger.debug(`Newsletter raw query method not available: ${queryErr.message}`);
+          logger.info(`✅ Newsletter result (method 1): ${JSON.stringify(newsletters)}`);
+        } else if (typeof this.sock.query === 'function') {
+          const result = await this.sock.query({
+            tag: 'iq',
+            attrs: { to: '@s.whatsapp.net', xmlns: 'w:mex', type: 'get' },
+            content: [{ tag: 'query', attrs: {}, content: [{ tag: 'list_type', attrs: { v: '2' } }] }]
+          });
+          logger.info(`✅ Newsletter result (method 2): ${JSON.stringify(result)}`);
+          if (result?.content) {
+            newsletters = result.content.map(c => ({
+              id: c.attrs?.id || c.attrs?.jid,
+              name: c.attrs?.name || c.attrs?.subject || 'WhatsApp Channel'
+            })).filter(n => n.id);
           }
         }
-
-        if (newsletters && Array.isArray(newsletters) && newsletters.length > 0) {
-          let newsletterCount = 0;
+        if (newsletters?.length > 0) {
           newsletters.forEach(n => {
-            if (n && (n.id || n.jid)) {
-              const id = (n.id || n.jid).toLowerCase();
-              const name = n.name || n.subject || 'WhatsApp Channel';
-              this.chatNameMap[id] = name;
-              newsletterCount++;
-            }
+            const id = (n.id || n.jid).toLowerCase();
+            this.chatNameMap[id] = n.name || n.subject || 'WhatsApp Channel';
           });
           this._saveChatNameMap();
-          logger.info(`✅ Synced ${newsletterCount} subscribed newsletters/channels from account.`);
+          logger.info(`✅ Synced ${newsletters.length} newsletters/channels.`);
         } else {
-          logger.info('ℹ️ No newsletters returned from API. Newsletters may still appear via passive history sync (chats.set/chats.upsert).');
+          logger.info('ℹ️ No newsletters returned.');
         }
       } catch (newsErr) {
-        logger.warn(`Could not sync WhatsApp newsletters: ${newsErr.message}. Relying on passive history sync.`);
+        logger.warn(`Could not sync newsletters: ${newsErr.message}`);
       }
 
-      // Seeding latest messages of target groups that are quiet in the local DB
       for (const targetId of this.targetIds) {
-        const exists = this.database.db.prepare('SELECT 1 FROM messages WHERE LOWER(group_id) = ? LIMIT 1').get(targetId);
-        if (!exists) {
-          logger.info(`⏳ Retroactively requesting history for quiet target WhatsApp: ${targetId}`);
+        if (!this.database.db.prepare('SELECT 1 FROM messages WHERE LOWER(group_id) = ? LIMIT 1').get(targetId)) {
+          logger.info(`⏳ Retroactively requesting history: ${targetId}`);
           try {
-            // Request history from socket
             const history = await this.sock.fetchMessagesFromJid(targetId, { limit: 2 });
-            if (history && history.length > 0) {
-              for (const histMsg of history) {
-                if (histMsg.message) {
-                  await this._processIncomingMessage(histMsg);
-                }
-              }
+            for (const histMsg of history || []) {
+              if (histMsg.message) await this._processIncomingMessage(histMsg);
             }
           } catch (fetchErr) {
-            logger.debug(`Could not retroactively pull history for ${targetId}: ${fetchErr.message}`);
+            logger.debug(`Could not pull history for ${targetId}: ${fetchErr.message}`);
           }
         }
       }
