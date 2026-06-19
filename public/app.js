@@ -30,7 +30,7 @@ async function fetchTelegramStatus() {
         statusElement.textContent = 'Status: Connected';
         loginFormElement.style.display = 'none';
       } else if (data.tempPhone) {
-        statusElement.textContent = \`Status: Waiting for OTP for \${data.tempPhone}\`;
+        statusElement.textContent = `Status: Waiting for OTP for ${data.tempPhone}`;
         showTelegramLoginForm(true);
       } else {
         statusElement.textContent = 'Status: Not Connected. Please log in.';
