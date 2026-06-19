@@ -2,7 +2,7 @@ version: '3.8'
 
 services:
   cc-brief-agent:
-    image: sourabhjagga/briefing-agent-copy:latest
+    image: sourabhjagga/briefing-agent-fresh:latest
     container_name: cc-brief-agent
     restart: unless-stopped
     volumes:

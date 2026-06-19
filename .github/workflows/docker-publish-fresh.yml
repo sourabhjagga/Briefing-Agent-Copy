@@ -1,4 +1,4 @@
-name: Docker Publish to Hub
+name: Docker Publish Fresh
 
 on:
   push:
@@ -6,10 +6,8 @@ on:
   workflow_dispatch:
 
 jobs:
-  build-and-push-arm64:
-    name: Build and Push ARM64 Image
-    runs-on: ubuntu-24.04-arm
-
+  build-and-push:
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -23,11 +21,11 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Build and push ARM64 image
+      - name: Build and push
         uses: docker/build-push-action@v5
         with:
           context: .
           platforms: linux/arm64
           push: true
-          tags: ${{ secrets.DOCKERHUB_USERNAME }}/briefing-agent-copy:latest
-          cache-metadata-file: /tmp/cache-metadata
+          tags: ${{ secrets.DOCKERHUB_USERNAME }}/briefing-agent-fresh:latest
+          no-cache: true
