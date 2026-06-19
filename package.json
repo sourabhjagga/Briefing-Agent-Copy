@@ -5,7 +5,8 @@
   "main": "src/index.js",
   "scripts": {
     "start": "node src/index.js",
-    "dev": "node src/index.js"
+    "dev": "node src/index.js",
+    "build": "esbuild public/app.js --bundle --minify --outfile=public/app.min.js --loader:.js=jsx"
   },
   "keywords": [
     "credit-cards",
@@ -19,6 +20,9 @@
   ],
   "author": "Sourabh Jagga",
   "license": "MIT",
+  "devDependencies": {
+    "esbuild": "^0.20.2"
+  },
   "dependencies": {
     "@google/generative-ai": "^0.11.0",
     "@whiskeysockets/baileys": "^6.7.18",

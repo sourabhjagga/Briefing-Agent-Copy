@@ -13,7 +13,15 @@ ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
 # Install dependencies and force compilation scripts to run as root (foreground-scripts)
 # This completely bypasses the NPM privilege-downgrade write permission bug
 RUN rm -rf node_modules package-lock.json
-RUN npm install --omit=dev --foreground-scripts
+RUN npm install --foreground-scripts
+
+# Copy clean-slate source files and static assets
+COPY src/ ./src
+RUN mkdir /app/public
+COPY public/ /app/public
+
+# Build the frontend assets
+RUN npm run build
 
 # ─── STAGE 2: RUNTIME ───────────────────────────────────────────────────
 # Use the ultra-slim Debian-slim image for production
@@ -60,10 +68,10 @@ RUN groupadd -r agentsg && useradd -r -m -g agentsg agentuser
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/package.json ./package.json
 
-# Copy clean-slate source files and static assets
-COPY src/ ./src
+# Copy source files and static assets from builder stage
+COPY --from=builder /app/src/ ./src
 RUN mkdir /app/public
-COPY public/ /app/public
+COPY --from=builder /app/public/ /app/public
 
 # Create data directories and set correct permissions
 RUN mkdir -p data logs && \
