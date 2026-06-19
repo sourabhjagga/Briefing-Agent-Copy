@@ -54,18 +54,19 @@ ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
 
 # Create application user and runtime directories for data persistence
 # Debian standard groupadd and useradd used for container security
-RUN groupadd -r agentsg && \
-    useradd -r -m -g agentsg agentuser && \
-    mkdir -p data logs && \
-    chown -R agentuser:agentsg /app
+RUN groupadd -r agentsg && useradd -r -m -g agentsg agentuser
 
 # Copy built node_modules and dependencies from builder stage
-COPY --from=builder --chown=agentuser:agentsg /app/node_modules ./node_modules
-COPY --from=builder --chown=agentuser:agentsg /app/package.json ./package.json
+COPY --from=builder /app/node_modules ./node_modules
+COPY --from=builder /app/package.json ./package.json
 
 # Copy clean-slate source files and static assets
-COPY --chown=agentuser:agentsg src/ ./src
-COPY --chown=agentuser:agentsg public/ ./public
+COPY src/ ./src
+COPY public/ ./public
+
+# Create data directories and set correct permissions
+RUN mkdir -p data logs && \
+    chown -R agentuser:agentsg /app
 
 # Switch to the non-root application user for execution
 USER agentuser
