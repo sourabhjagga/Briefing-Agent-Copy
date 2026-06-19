@@ -5,6 +5,9 @@ services:
     image: sourabhjagga/briefing-agent-fresh:latest
     container_name: cc-brief-agent
     restart: unless-stopped
+    depends_on:
+      warp-proxy:
+        condition: service_healthy
     volumes:
       - cc_brief_data_test:/app/data
       - cc_brief_logs:/app/logs
@@ -31,18 +34,13 @@ services:
       - REDDIT_PASSWORD=${REDDIT_PASSWORD}
       - TELEGRAM_API_ID=${TELEGRAM_API_ID}
       - TELEGRAM_API_HASH=${TELEGRAM_API_HASH}
-      - TELEGRAM_PROXY=${TELEGRAM_PROXY:-}
+      - TELEGRAM_PROXY=socks5://warp-proxy:9091
     logging:
       driver: "json-file"
       options:
         max-size: "10m"
         max-file: "3"
-    healthcheck:
-      test: [ "CMD", "node", "-e", "fetch('http://localhost:3000/health').then(r => r.ok ? process.exit(0) : process.exit(1)).catch(() => process.exit(1)"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 45s
+
 
   flaresolverr:
     image: ghcr.io/flaresolverr/flaresolverr:latest
@@ -60,4 +58,10 @@ services:
     image: monius/docker-warp-socks:latest
     container_name: warp-proxy
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "9091"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
 
