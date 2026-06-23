@@ -3,6 +3,9 @@ node_modules
 .env.production
 .env.local
 data/*.db
+data/*.txt
+data/*.json
+data/baileys_auth/
 data/telegram_user_session.txt
 data/*_cookies.json
 logs/*.log
