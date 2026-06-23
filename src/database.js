@@ -10,7 +10,9 @@ const fs = require('fs');
 const logger = require('./logger');
 
 class DatabaseManager {
-  constructor(dbPath) {
+  // Default fallback ensures the app never crashes if DB_PATH env var is
+  // missing or undefined (e.g. Coolify env panel override not configured).
+  constructor(dbPath = '/app/data/messages.db') {
     const resolvedPath = path.resolve(dbPath);
     const dir = path.dirname(resolvedPath);
     if (!fs.existsSync(dir)) {
