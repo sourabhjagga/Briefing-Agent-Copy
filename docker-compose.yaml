@@ -5,11 +5,10 @@ services:
       dockerfile: Dockerfile
     container_name: cc-brief-agent
     restart: unless-stopped
-    depends_on:
-      warp-proxy:
-        condition: service_healthy
-      flaresolverr:
-        condition: service_started
+    # warp-proxy and flaresolverr are optional sidecars.
+    # cc-brief-agent starts unconditionally — warp is a fallback only
+    # if Telegram is blocked. Removing hard depends_on prevents deployment
+    # failure when warp-proxy healthcheck doesn't pass.
     volumes:
       - cc_brief_data:/app/data
       - cc_brief_logs:/app/logs
@@ -46,9 +45,6 @@ services:
         max-file: "3"
 
   flaresolverr:
-    # User confirmed ghcr.io/flaresolverr/flaresolverr was working fine
-    # previously. Docker Hub page confirms multi-arch (amd64 + arm64)
-    # images are published under the :latest tag.
     image: ghcr.io/flaresolverr/flaresolverr:latest
     container_name: flaresolverr
     mem_limit: 1g
@@ -61,18 +57,14 @@ services:
     restart: unless-stopped
 
   warp-proxy:
-    # ghcr.io/mon-ius/docker-warp-socks:v6 — user confirmed monius was
-    # the working image. v6 is the current stable release published at
-    # ghcr.io (GHCR preferred by upstream for security). v6 uses the
-    # SagerNet/sing-box core and does NOT need NET_ADMIN, SYS_MODULE,
-    # sysctls, or a /lib/modules bind mount — all removed.
-    # Multi-platform: linux/amd64, linux/arm64, linux/arm, and more.
+    # Optional fallback SOCKS5 proxy via Cloudflare WARP.
+    # Used only when Telegram is blocked on the host network.
+    # Runs as a background sidecar — cc-brief-agent does NOT depend on it.
+    # If warp-proxy is unhealthy, cc-brief-agent continues using direct connection.
     image: ghcr.io/mon-ius/docker-warp-socks:v6
     container_name: warp-proxy
     restart: unless-stopped
     healthcheck:
-      # wget is always available in the alpine v6 base image.
-      # Checks that the mixed proxy port 9091 is accepting connections.
       test: ["CMD", "wget", "-qO-", "--timeout=5", "http://localhost:9091"]
       interval: 15s
       timeout: 8s
