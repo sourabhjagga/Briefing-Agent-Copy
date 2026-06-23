@@ -140,27 +140,9 @@ class DatabaseManager {
    * a UNIQUE constraint to an existing table is to recreate it.
    * This is safe: scraper_health is purely operational/ephemeral health data
    * and losing it on first upgrade has zero impact on message history or briefs.
-   *
-   * Strategy:
-   *   1. Detect whether the current scraper_health table already has a UNIQUE
-   *      index on source_id by querying sqlite_master.
-   *   2. If not, rename the old table, create the new schema, copy the most
-   *      recent row per source_id (deduplicating), then drop the old table.
    */
   _migrateScraperHealth() {
     try {
-      // Check if a unique index already exists on scraper_health.source_id
-      const hasUnique = this.db.prepare(`
-        SELECT COUNT(*) as cnt FROM sqlite_master
-        WHERE type IN ('index', 'table')
-          AND tbl_name = 'scraper_health'
-          AND (
-            sql LIKE '%UNIQUE%source_id%'
-            OR (type = 'index' AND sql LIKE '%source_id%' AND name LIKE '%unique%')
-          )
-      `).get();
-
-      // Also check via PRAGMA index_list for a unique index
       const indexes = this.db.prepare(`PRAGMA index_list(scraper_health)`).all();
       const uniqueOnSourceId = indexes.some(idx => {
         if (!idx.unique) return false;
@@ -169,17 +151,14 @@ class DatabaseManager {
       });
 
       if (uniqueOnSourceId) {
-        // Already migrated or freshly created with UNIQUE — nothing to do.
-        return;
+        return; // Already migrated or freshly created with UNIQUE — nothing to do.
       }
 
       logger.info('🔧 Migrating scraper_health: adding UNIQUE constraint on source_id...');
 
       this.db.exec(`
-        -- Step 1: rename old table
         ALTER TABLE scraper_health RENAME TO scraper_health_old;
 
-        -- Step 2: create new table with UNIQUE on source_id
         CREATE TABLE scraper_health (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
           source_id TEXT NOT NULL UNIQUE,
@@ -191,7 +170,6 @@ class DatabaseManager {
           updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
         );
 
-        -- Step 3: copy most-recent row per source_id (resolve duplicates)
         INSERT INTO scraper_health (source_id, source_type, last_success, last_attempt, error_count, last_error, updated_at)
         SELECT source_id, source_type, last_success, last_attempt, error_count, last_error, updated_at
         FROM scraper_health_old
@@ -199,14 +177,11 @@ class DatabaseManager {
           SELECT MAX(id) FROM scraper_health_old GROUP BY source_id
         );
 
-        -- Step 4: drop old table
         DROP TABLE scraper_health_old;
       `);
 
       logger.info('✅ scraper_health migration complete.');
     } catch (err) {
-      // Log but do NOT rethrow — a migration failure should never prevent boot.
-      // The app will fall back to the INSERT OR REPLACE path if ON CONFLICT still fails.
       logger.warn(`⚠️ scraper_health migration warning (non-fatal): ${err.message}`);
     }
   }
@@ -516,8 +491,71 @@ class DatabaseManager {
     logger.info('📅 Seeded default schedule rules for cc and deals categories.');
   }
 
+  /**
+   * Seed the default 'cc' and 'deals' categories on first boot.
+   * Called by index.js main() immediately after constructing DatabaseManager.
+   * If the categories already exist (slug UNIQUE), the INSERT is silently skipped.
+   *
+   * @param {string} ccBotToken         - Telegram bot token for the CC category
+   * @param {string} ccChatId           - Telegram chat ID for the CC category
+   * @param {string|null} dealsBotToken - Telegram bot token for the Deals category
+   * @param {string} dealsChatId        - Telegram chat ID for the Deals category
+   */
+  seedDefaultCategories(ccBotToken, ccChatId, dealsBotToken, dealsChatId) {
+    const defaults = [
+      {
+        slug: 'cc',
+        display_name: 'CC & Finance',
+        bot_token: ccBotToken || null,
+        chat_id: ccChatId || null,
+        ai_prompt: null,
+        delivery_channel: 'telegram',
+        whatsapp_delivery_jid: null,
+      },
+      {
+        slug: 'deals',
+        display_name: 'Deals & Offers',
+        bot_token: dealsBotToken || null,
+        chat_id: dealsChatId || null,
+        ai_prompt: null,
+        delivery_channel: 'telegram',
+        whatsapp_delivery_jid: null,
+      },
+    ];
+
+    let seeded = 0;
+    for (const cat of defaults) {
+      try {
+        const existing = this.getCategoryBySlug(cat.slug);
+        if (!existing) {
+          this.insertCategory(
+            cat.slug, cat.display_name, cat.bot_token, cat.chat_id,
+            cat.ai_prompt, cat.delivery_channel, cat.whatsapp_delivery_jid
+          );
+          seeded++;
+        } else if (!existing.bot_token && cat.bot_token) {
+          // Update tokens if they were null on a previous first-run
+          this.updateCategory(
+            existing.id, existing.display_name, cat.bot_token, cat.chat_id,
+            existing.ai_prompt, existing.is_active,
+            existing.delivery_channel, existing.whatsapp_delivery_jid
+          );
+        }
+      } catch (err) {
+        logger.warn(`seedDefaultCategories: could not seed "${cat.slug}": ${err.message}`);
+      }
+    }
+
+    if (seeded > 0) {
+      logger.info(`🌱 Seeded ${seeded} default categor${seeded === 1 ? 'y' : 'ies'} (cc, deals).`);
+    }
+
+    // Also seed default schedule rules if none exist yet
+    this.seedDefaultSchedules();
+  }
+
   getWhatsAppTargets(categorySlug) {
-    return this.getAllSources().filter(s => 
+    return this.getAllSources().filter(s =>
       s.type === `${categorySlug}-whatsapp` && s.is_active === 1
     );
   }
