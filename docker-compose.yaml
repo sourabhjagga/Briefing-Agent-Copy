@@ -4,6 +4,10 @@ services:
     # This is pushed automatically by .github/workflows/docker-publish-fresh.yml
     # on every push to main. No local build needed on the host.
     image: sourabhjagga/briefing-agent-fresh:latest
+    # Always pull the latest image from Docker Hub on every deploy.
+    # This ensures Coolify never uses a stale cached layer and always
+    # runs the image built by the most recent GitHub Actions workflow run.
+    pull_policy: always
     container_name: cc-brief-agent
     restart: unless-stopped
     depends_on:
