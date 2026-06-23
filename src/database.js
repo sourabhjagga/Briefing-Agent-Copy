@@ -255,6 +255,10 @@ class DatabaseManager {
       updateScheduleRule: this.db.prepare(`
         UPDATE schedule_rules SET cron_expression = ?, label = ?, is_active = ? WHERE id = ?
       `),
+      // FIX: toggleScheduleRule pre-compiled statement — was missing entirely.
+      // Called by PATCH /api/schedules/:id (toggle-only fast path) and
+      // PATCH /api/schedules/:id/toggle in index.js.
+      toggleScheduleRule: this.db.prepare(`UPDATE schedule_rules SET is_active = ? WHERE id = ?`),
       deleteScheduleRule: this.db.prepare(`DELETE FROM schedule_rules WHERE id = ?`),
       deleteScheduleRulesByCategory: this.db.prepare(`DELETE FROM schedule_rules WHERE category_slug = ?`),
       // FIX: getScraperHealthForSource is now a pre-compiled statement.
@@ -280,6 +284,9 @@ class DatabaseManager {
       `),
       getCookies: this.db.prepare(`SELECT cookies_json FROM cookies_store WHERE site = ?`),
       getAllCookieSites: this.db.prepare(`SELECT site, updated_at FROM cookies_store`),
+      // FIX: deleteCookies pre-compiled statement — was missing entirely.
+      // Called by DELETE /api/cookies/:site and POST /api/cookies/delete in index.js.
+      deleteCookies: this.db.prepare(`DELETE FROM cookies_store WHERE site = ?`),
     };
   }
 
@@ -399,16 +406,37 @@ class DatabaseManager {
   toggleCategory(id, isActive) { this.statements.toggleCategory.run(isActive ? 1 : 0, id); }
   deleteCategory(id) { this.statements.deleteCategory.run(id); }
 
+  // FIX: addCategory — public alias for insertCategory().
+  // Called as database.addCategory(...) in POST /api/categories (index.js).
+  addCategory(slug, displayName, botToken, chatId, aiPrompt, deliveryChannel = 'telegram', whatsappDeliveryJid = null) {
+    return this.insertCategory(slug, displayName, botToken, chatId, aiPrompt, deliveryChannel, whatsappDeliveryJid);
+  }
+
   getAllScheduleRules() { return this.statements.getAllScheduleRules.all(); }
   getScheduleRulesByCategory(slug) { return this.statements.getScheduleRulesByCategory.all(slug); }
+
+  // FIX: getScheduleRules — alias for getScheduleRulesByCategory().
+  // Called as database.getScheduleRules(slug) in GET /api/schedules/:slug (index.js).
+  getScheduleRules(slug) { return this.getScheduleRulesByCategory(slug); }
 
   insertScheduleRule(categorySlug, cronExpression, label) {
     return this.statements.insertScheduleRule.run(categorySlug, cronExpression, label);
   }
 
+  // FIX: addScheduleRule — public alias for insertScheduleRule().
+  // Called as database.addScheduleRule(...) in POST /api/schedules (index.js).
+  addScheduleRule(categorySlug, cronExpression, label) {
+    return this.insertScheduleRule(categorySlug, cronExpression, label);
+  }
+
   updateScheduleRule(id, cronExpression, label, isActive) {
     this.statements.updateScheduleRule.run(cronExpression, label, isActive ? 1 : 0, id);
   }
+
+  // FIX: toggleScheduleRule — was missing entirely.
+  // Called by the toggle-only fast path in PATCH /api/schedules/:id and
+  // by PATCH /api/schedules/:id/toggle in index.js.
+  toggleScheduleRule(id, isActive) { this.statements.toggleScheduleRule.run(isActive ? 1 : 0, id); }
 
   deleteScheduleRule(id) { this.statements.deleteScheduleRule.run(id); }
   deleteScheduleRulesByCategory(slug) { this.statements.deleteScheduleRulesByCategory.run(slug); }
@@ -458,6 +486,13 @@ class DatabaseManager {
     catch (err) { return []; }
   }
 
+  // FIX: deleteCookies — was missing entirely.
+  // Called by DELETE /api/cookies/:site and POST /api/cookies/delete in index.js.
+  deleteCookies(site) {
+    try { this.statements.deleteCookies.run(site); }
+    catch (err) { logger.error(`Failed to delete cookies for ${site} in DB: ${err.message}`); }
+  }
+
   upsertScraperHealth(sourceId, sourceType, success, errorMsg = null) {
     const now = new Date().toISOString();
     try {
@@ -478,6 +513,10 @@ class DatabaseManager {
     try { return this.statements.getScraperHealth.all(); }
     catch (err) { return []; }
   }
+
+  // FIX: getAllScraperHealth — alias for getScraperHealth().
+  // Called as database.getAllScraperHealth() in GET /api/health (index.js).
+  getAllScraperHealth() { return this.getScraperHealth(); }
 
   close() {
     this.db.close();
