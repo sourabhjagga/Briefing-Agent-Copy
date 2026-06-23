@@ -350,6 +350,14 @@ class DatabaseManager {
     return result.changes > 0;
   }
 
+  /**
+   * Alias for insertMessage() — some scrapers call saveMessage() directly.
+   * Added to fix the TypeError crash seen across all scraper modules.
+   */
+  saveMessage(data) {
+    return this.insertMessage(data);
+  }
+
   getTodayMessages(sourcePrefix) {
     const startOfDay = Math.floor(new Date().setHours(0, 0, 0, 0) / 1000);
     return this.statements.getTodayMessages.all(`${sourcePrefix}%`, startOfDay);
