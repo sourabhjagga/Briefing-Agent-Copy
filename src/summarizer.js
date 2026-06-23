@@ -8,6 +8,8 @@ const { GoogleGenerativeAI } = require('@google/generative-ai');
 const axios = require('axios');
 const logger = require('./logger');
 
+const OPENROUTER_TIMEOUT = parseInt(process.env.OPENROUTER_TIMEOUT || '120000', 10);
+
 // Define a central, easily swappable fallback registry
 const FALLBACK_MODELS = [
   { provider: 'gemini', id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash (Primary)' },
@@ -29,8 +31,6 @@ class Summarizer {
     if (this.openrouterKey) logger.info('🤖 Secondary AI: OpenRouter Free Fallbacks ready.');
   }
 
-  // ─── Primary: Daily Briefing Generator ─────────────────────────────────────
-
   async generateSummary(messages, customPrompt = undefined) {
     if (!messages || messages.length === 0) return this._noMessagesTemplate();
 
@@ -38,11 +38,9 @@ class Summarizer {
     const fullPrompt = this._buildBriefPrompt(groupedMessages, null, customPrompt);
     if (!fullPrompt) return this._noMessagesTemplate();
 
-    // Estimate token size (approx. 1 token = 4 characters)
     const estimatedTokens = fullPrompt.length / 4;
     logger.info(`Estimated prompt token size: ~${Math.round(estimatedTokens)} tokens.`);
 
-    // Batch process to prevent 250K TPM quota crashes
     if (estimatedTokens > 200000) {
       logger.warn('Token size exceeds 200K. Executing multi-stage batch processing...');
       return this._batchAndSummarize(groupedMessages);
@@ -50,8 +48,6 @@ class Summarizer {
 
     return this._callAIWithFallback(fullPrompt, groupedMessages);
   }
-
-  // ─── Interactive Command Handler ──────────────────────────────────────────
 
   async answerQuestion(question, contextMessages) {
     const msgText = contextMessages.length > 0
@@ -81,8 +77,6 @@ Provide a concise, accurate, and actionable answer. Use Indian Rupee (₹) symbo
       return 'Sorry, an error occurred while answering. Please try again.';
     }
   }
-
-  // ─── YouTube Transcript Summarization ─────────────────────────────────────
 
   async summarizeYoutubeVideo(title, transcript, sourceType) {
     const isCreditCard = sourceType === 'cc-youtube';
@@ -115,8 +109,6 @@ OUTPUT RULES:
     }
   }
 
-  // ─── Core Fallback Processing ─────────────────────────────────────────────
-
   async _callAIWithFallback(prompt, groupedMessages, isBatchSubtask = false) {
     for (const model of FALLBACK_MODELS) {
       logger.info(`Attempting generation with model: ${model.name}...`);
@@ -128,7 +120,6 @@ OUTPUT RULES:
           const result = await gm.generateContent(prompt);
           summary = result.response.text();
         } else if (model.provider === 'openrouter' && this.openrouterKey) {
-          // Pure HTTP axios call to OpenRouter to save package weight
           const res = await axios.post('https://openrouter.ai/api/v1/chat/completions', {
             model: model.id,
             messages: [{ role: 'user', content: prompt }]
@@ -137,7 +128,7 @@ OUTPUT RULES:
               'Authorization': `Bearer ${this.openrouterKey}`,
               'Content-Type': 'application/json'
             },
-            timeout: 30000
+            timeout: OPENROUTER_TIMEOUT
           });
           summary = res.data?.choices?.[0]?.message?.content || '';
         }
@@ -155,31 +146,27 @@ OUTPUT RULES:
     return isBatchSubtask ? null : this._fallbackSummary(groupedMessages);
   }
 
-  // ─── Multi-Stage Batch Processing ──────────────────────────────────────────
-
   async _batchAndSummarize(groupedMessages) {
     const groupNames = Object.keys(groupedMessages);
-    const numBatches = Math.ceil(groupNames.length / 3);
+    const batchSize = Math.max(1, Math.ceil(groupNames.length / 3));
     
     let combinedSummaries = '';
     
-    for (let i = 0; i < groupNames.length; i += numBatches) {
+    for (let i = 0; i < groupNames.length; i += batchSize) {
+      const batchNumber = Math.floor(i / batchSize) + 1;
       const batchGroups = {};
-      groupNames.slice(i, i + numBatches).forEach(g => { batchGroups[g] = groupedMessages[g]; });
+      groupNames.slice(i, i + batchSize).forEach(g => { batchGroups[g] = groupedMessages[g]; });
       
-      logger.info(`Processing Batch ${i / numBatches + 1}...`);
+      logger.info(`Processing Batch ${batchNumber}...`);
       const batchPrompt = this._buildBriefPrompt(batchGroups, 1000); 
       
       const batchSummary = await this._callAIWithFallback(batchPrompt, batchGroups, true);
       if (batchSummary) {
-        combinedSummaries += `\n\n--- BATCH ${i / numBatches + 1} ---\n${batchSummary}`;
+        combinedSummaries += `\n\n--- BATCH ${batchNumber} ---\n${batchSummary}`;
       }
       
-      // 5-second buffer to respect RPM limits
       await new Promise(r => setTimeout(r, 5000));
     }
-
-    const today = this._todayLabel();
 
     const finalPrompt = `You are "CC Brief AI".
 I have processed a massive amount of credit card messages in batches. 
@@ -200,8 +187,6 @@ STRICT RULES:
     logger.info('Generating final master brief from batch summaries...');
     return this._callAIWithFallback(finalPrompt, groupedMessages);
   }
-
-  // ─── Prompt Helpers & Keyword Filtering ────────────────────────────────────
 
   _buildBriefPrompt(groupedMessages, maxOverride = null, customPrompt = undefined) {
     const maxMsgs = maxOverride || parseInt(process.env.MAX_MESSAGES_FOR_SUMMARY, 10) || 2000;
@@ -226,9 +211,6 @@ STRICT RULES:
     if (totalIncluded === 0) return null;
 
     const today = this._todayLabel();
-
-    // Extract all deal URLs from the raw messages into an explicit reference map.
-    // This is injected into the prompt so the AI can reliably attach links to deals.
     const urlMap = this._extractDealUrls(groupedMessages);
     const urlMapEntries = Object.entries(urlMap);
     const urlMapSection = urlMapEntries.length > 0
@@ -312,19 +294,13 @@ STRICT RULES:
 - DO NOT hallucinate. Base all content strictly on the messages above.`;
   }
 
-  /**
-   * Extracts all <a href="URL"> links from message bodies into a flat title→URL map.
-   * Used to build the URL Reference Map injected into AI prompts to prevent link loss.
-   */
   _extractDealUrls(groupedMessages) {
     const urlMap = {};
-    // Match any <a href="URL"> tag in the message body
     const anchorRegex = /<a\s+href="([^"]+)"[^>]*>/i;
-    // Match the deal title line: either after "<b>Deal:</b>" or the first meaningful bold text
     const titlePatterns = [
-      /🔥\s*<b>Deal:<\/b>\s*([^\n<]{5,100})/,  // DesiDime format
-      /📌\s*<b>Title:<\/b>\s*([^\n<]{5,100})/,  // Other format
-      /•\s*<b>([^<]{5,100})<\/b>/,               // Generic bold title
+      /🔥\s*<b>Deal:<\/b>\s*([^\n<]{5,100})/,
+      /📌\s*<b>Title:<\/b>\s*([^\n<]{5,100})/,
+      /•\s*<b>([^<]{5,100})<\/b>/,
     ];
 
     for (const msgs of Object.values(groupedMessages)) {
@@ -335,7 +311,6 @@ STRICT RULES:
         const url = anchorMatch[1];
         if (!url || !url.startsWith('http')) continue;
 
-        // Try each title pattern in order
         let title = null;
         for (const pattern of titlePatterns) {
           const m = msg.body.match(pattern);
@@ -345,7 +320,6 @@ STRICT RULES:
           }
         }
 
-        // Fallback: use the first 60 non-HTML chars of the body as the key
         if (!title) {
           title = msg.body.replace(/<[^>]+>/g, '').trim().split('\n')[0].substring(0, 80);
         }
@@ -397,22 +371,14 @@ STRICT RULES:
 
   _formatSummary(text) {
     let summary = text.trim();
-    // Convert any residual markdown to Telegram-safe HTML
     summary = summary.replace(/\*\*(.*?)\*\*/gs, '<b>$1</b>');
     summary = summary.replace(/(?<!\*)\*(?!\*)(.*?)(?<!\*)\*(?!\*)/gs, '<i>$1</i>');
     summary = summary.replace(/__(.*?)__/gs, '<u>$1</u>');
-    // Strip any unsafe HTML tags (keep only Telegram-safe ones)
     summary = summary.replace(/<\/?(?!(?:b|i|code|a|u|s|pre|em|strong|ins|del)\b)[^>]+>/g, '');
-    // Repair unclosed tags to prevent Telegram 400 parse errors
     summary = this._repairTelegramHtml(summary);
     return summary;
   }
 
-  /**
-   * Balances unclosed HTML tags in AI-generated text to prevent Telegram
-   * '400: Can't find end tag' errors. Counts open vs close occurrences
-   * for each allowed tag and appends or trims the difference.
-   */
   _repairTelegramHtml(html) {
     const pairedTags = ['b', 'i', 'u', 's', 'code', 'pre', 'em', 'strong', 'a'];
     for (const tag of pairedTags) {
@@ -422,10 +388,8 @@ STRICT RULES:
       const closeCount = (html.match(closeRegex) || []).length;
 
       if (openCount > closeCount) {
-        // Append the missing closing tags at the very end
         html += `</${tag}>`.repeat(openCount - closeCount);
       } else if (closeCount > openCount) {
-        // Strip excess closing tags from the end (keep first openCount occurrences)
         let seen = 0;
         html = html.replace(new RegExp(`</${tag}>`, 'gi'), (match) => {
           seen++;

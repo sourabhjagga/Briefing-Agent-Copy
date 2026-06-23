@@ -26,7 +26,6 @@ class MessageDatabase {
   }
 
   _initialize() {
-    // 1. Initial schema creation
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS messages (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -117,7 +116,6 @@ class MessageDatabase {
       );
     `);
 
-    // 2. Schema Migrations (Manual fixes for existing databases)
     const tableInfo = this.db.prepare("PRAGMA table_info(categories)").all();
     const hasDeliveryChannel = tableInfo.some(col => col.name === 'delivery_channel');
     const hasWhatsAppDeliveryJid = tableInfo.some(col => col.name === 'whatsapp_delivery_jid');
@@ -205,6 +203,9 @@ class MessageDatabase {
       getActiveSourcesByType: this.db.prepare(`
         SELECT source_id FROM sources WHERE type = ? AND is_active = 1
       `),
+      getSourcesByCategory: this.db.prepare(`
+        SELECT * FROM sources WHERE type LIKE ? ORDER BY created_at DESC
+      `),
       addSource: this.db.prepare(`
         INSERT INTO sources (name, source_id, type, is_active)
         VALUES (?, ?, ?, 1)
@@ -269,7 +270,6 @@ class MessageDatabase {
       deleteCookies: this.db.prepare(`
         DELETE FROM cookies WHERE site = ?
       `),
-      // Schedule rules
       getScheduleRules: this.db.prepare(`
         SELECT * FROM schedule_rules WHERE category_slug = ? ORDER BY id ASC
       `),
@@ -289,7 +289,6 @@ class MessageDatabase {
       toggleScheduleRule: this.db.prepare(`
         UPDATE schedule_rules SET is_active=?, updated_at=datetime('now') WHERE id=?
       `),
-      // Scraper health
       recordScraperSuccess: this.db.prepare(`
         INSERT INTO scraper_health (scraper_name, last_success_at, consecutive_failures, updated_at)
         VALUES (?, datetime('now'), 0, datetime('now'))
@@ -390,6 +389,7 @@ class MessageDatabase {
 
   getAllSources() { return this.statements.getAllSources.all(); }
   getActiveSourcesByType(type) { return this.statements.getActiveSourcesByType.all(type).map(r => r.source_id); }
+  getSourcesByCategory(categorySlug) { return this.statements.getSourcesByCategory.all(`${categorySlug}-%`); }
   addSource(name, sourceId, type) { this.statements.addSource.run(name, sourceId, type); }
   addSourceInactive(name, sourceId, type) { this.statements.addSourceInactive.run(name, sourceId, type); }
   toggleSource(id, isActive) { this.statements.toggleSource.run(isActive ? 1 : 0, id); }
@@ -440,10 +440,6 @@ class MessageDatabase {
     }
   }
 
-  getSourcesByCategory(categorySlug) {
-    return this.getAllSources().filter(s => s.type.startsWith(categorySlug + '-'));
-  }
-
   getWhatsAppTargets(categorySlug) {
     return this.getAllSources().filter(s => 
       s.type === `${categorySlug}-whatsapp` && s.is_active === 1
@@ -465,7 +461,6 @@ class MessageDatabase {
     catch (err) { logger.error(`Failed to delete cookies for ${site} from DB: ${err.message}`); }
   }
 
-  // Schedule rule CRUD
   getScheduleRules(categorySlug) { return this.statements.getScheduleRules.all(categorySlug); }
   getAllScheduleRules() { return this.statements.getAllScheduleRules.all(); }
   addScheduleRule(categorySlug, cronExpression, label) {
@@ -477,7 +472,6 @@ class MessageDatabase {
   deleteScheduleRule(id) { this.statements.deleteScheduleRule.run(id); }
   toggleScheduleRule(id, isActive) { this.statements.toggleScheduleRule.run(isActive ? 1 : 0, id); }
 
-  // Scraper health
   recordScraperSuccess(scraperName) { this.statements.recordScraperSuccess.run(scraperName); }
   recordScraperFailure(scraperName, errorMsg) { this.statements.recordScraperFailure.run(scraperName, errorMsg || ''); }
   getAllScraperHealth() { return this.statements.getAllScraperHealth.all(); }

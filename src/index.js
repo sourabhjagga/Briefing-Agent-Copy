@@ -37,9 +37,51 @@ function validateConfig() {
     missing.forEach(key => logger.error(`  ❌ ${key}`));
     process.exit(1);
   }
+
+  if (!process.env.OPENROUTER_API_KEY) {
+    logger.warn('⚠️ OPENROUTER_API_KEY is not set. AI fallback models will be unavailable if Gemini fails.');
+  }
 }
 
-// ─── Dynamic Bot Instance Factory ──────────────────────────────────────────
+function parseIdParam(rawId) {
+  const id = parseInt(rawId, 10);
+  return Number.isInteger(id) && id > 0 ? id : null;
+}
+
+function syncCategoryRuntime(category, botInstances, scheduler, database, summarizer) {
+  if (!category) return;
+
+  const existingBot = botInstances.get(category.slug);
+
+  if (existingBot) {
+    existingBot.stop().catch(err => {
+      logger.warn(`Failed to stop existing bot for "${category.slug}": ${err.message}`);
+    });
+    botInstances.delete(category.slug);
+  }
+
+  if (category.is_active && category.bot_token && category.chat_id) {
+    try {
+      const newBot = new TelegramBotDispatcher(
+        category.bot_token,
+        category.chat_id,
+        database,
+        summarizer,
+        category.slug,
+        category.ai_prompt || undefined
+      );
+      botInstances.set(category.slug, newBot);
+      newBot.start().catch(err => logger.error(`Bot start failed for category "${category.slug}": ${err.message}`));
+      logger.info(`🔄 Synced bot runtime for category: ${category.slug}`);
+    } catch (err) {
+      logger.error(`Failed to sync bot runtime for category "${category.slug}": ${err.message}`);
+    }
+  }
+
+  scheduler.updateBotInstances(botInstances);
+  scheduler.reload();
+}
+
 function createBotInstances(database, summarizer) {
   const categories = database.getActiveCategories();
   const botInstances = new Map();
@@ -72,7 +114,6 @@ function createBotInstances(database, summarizer) {
   return botInstances;
 }
 
-// ─── Dashboard & API Express Server ──────────────────────────────────────────
 function startDashboardServer(database, whatsapp, telegramUser, scheduler, summarizer, botInstances, scrapers = {}) {
   const PORT = parseInt(process.env.HEALTH_PORT || '3000', 10);
   const app = express();
@@ -80,7 +121,6 @@ function startDashboardServer(database, whatsapp, telegramUser, scheduler, summa
   app.use(express.json());
   app.use(express.static(path.join(__dirname, '../public')));
 
-  // ─── Health ──────────────────────────────────────────────────────────────
   app.get('/health', (req, res) => {
     const waStatus = whatsapp.getStatus();
     const msgCount = database.getTodayMessageCount('cc');
@@ -94,7 +134,6 @@ function startDashboardServer(database, whatsapp, telegramUser, scheduler, summa
     });
   });
 
-  // ─── Scraper Health API ───────────────────────────────────────────────────
   app.get('/api/health', (req, res) => {
     try {
       res.json(database.getAllScraperHealth());
@@ -103,7 +142,6 @@ function startDashboardServer(database, whatsapp, telegramUser, scheduler, summa
     }
   });
 
-  // ─── Sources CRUD ────────────────────────────────────────────────────────
   app.get('/api/sources', (req, res) => {
     try {
       res.json(database.getAllSources());
@@ -125,7 +163,9 @@ function startDashboardServer(database, whatsapp, telegramUser, scheduler, summa
 
   app.delete('/api/sources/:id', (req, res) => {
     try {
-      database.deleteSource(req.params.id);
+      const id = parseIdParam(req.params.id);
+      if (!id) return res.status(400).json({ error: 'Invalid ID' });
+      database.deleteSource(id);
       res.json({ success: true });
     } catch (err) {
       res.status(500).json({ error: err.message });
@@ -134,12 +174,14 @@ function startDashboardServer(database, whatsapp, telegramUser, scheduler, summa
 
   app.patch('/api/sources/:id', (req, res) => {
     try {
+      const id = parseIdParam(req.params.id);
+      if (!id) return res.status(400).json({ error: 'Invalid ID' });
       const { is_active, type } = req.body;
       if (is_active !== undefined) {
-        database.toggleSource(req.params.id, is_active);
+        database.toggleSource(id, is_active);
       }
       if (type !== undefined) {
-        database.updateSourceType(req.params.id, type);
+        database.updateSourceType(id, type);
       }
       res.json({ success: true });
     } catch (err) {
@@ -147,7 +189,6 @@ function startDashboardServer(database, whatsapp, telegramUser, scheduler, summa
     }
   });
 
-  // ─── Categories CRUD ─────────────────────────────────────────────────────
   app.get('/api/categories', (req, res) => {
     try {
       res.json(database.getAllCategories());
@@ -167,19 +208,8 @@ function startDashboardServer(database, whatsapp, telegramUser, scheduler, summa
       }
       database.addCategory(slug, display_name, bot_token, chat_id, ai_prompt, delivery_channel, whatsapp_delivery_jid);
 
-      if (bot_token && chat_id) {
-        try {
-          const newBot = new TelegramBotDispatcher(
-            bot_token, chat_id, database, summarizer, slug, ai_prompt || undefined
-          );
-          botInstances.set(slug, newBot);
-          await newBot.start();
-          scheduler.updateBotInstances(botInstances);
-          logger.info(`🔄 Hot-loaded new bot instance for category: ${slug}`);
-        } catch (botErr) {
-          logger.error(`Bot creation failed for new category "${slug}": ${botErr.message}`);
-        }
-      }
+      const createdCategory = database.getCategoryBySlug(slug);
+      syncCategoryRuntime(createdCategory, botInstances, scheduler, database, summarizer);
 
       res.json({ success: true });
     } catch (err) {
@@ -187,38 +217,45 @@ function startDashboardServer(database, whatsapp, telegramUser, scheduler, summa
     }
   });
 
-  // FIX: allow toggle-only PATCH (only is_active) without requiring display_name
   app.patch('/api/categories/:id', async (req, res) => {
     try {
-      const { display_name, bot_token, chat_id, ai_prompt, is_active, delivery_channel, whatsapp_delivery_jid } = req.body;
+      const id = parseIdParam(req.params.id);
+      if (!id) return res.status(400).json({ error: 'Invalid ID' });
 
-      // Toggle-only call: just flip is_active, no full update needed
-      if (is_active !== undefined && !display_name && !bot_token && !chat_id && ai_prompt === undefined) {
-        database.toggleCategory(req.params.id, is_active ? 1 : 0);
+      const { display_name, bot_token, chat_id, ai_prompt, is_active, delivery_channel, whatsapp_delivery_jid } = req.body;
+      const existingCategory = database.getAllCategories().find(c => c.id === id);
+      if (!existingCategory) return res.status(404).json({ error: 'Category not found' });
+
+      const isToggleOnly =
+        is_active !== undefined &&
+        display_name === undefined &&
+        bot_token === undefined &&
+        chat_id === undefined &&
+        ai_prompt == null &&
+        delivery_channel === undefined &&
+        whatsapp_delivery_jid === undefined;
+
+      if (isToggleOnly) {
+        database.toggleCategory(id, is_active ? 1 : 0);
+        const refreshedCategory = database.getAllCategories().find(c => c.id === id);
+        syncCategoryRuntime(refreshedCategory, botInstances, scheduler, database, summarizer);
         return res.json({ success: true });
       }
 
       if (!display_name) return res.status(400).json({ error: 'Missing display_name' });
       database.updateCategory(
-        req.params.id, display_name, bot_token, chat_id, ai_prompt,
-        is_active !== undefined ? is_active : 1, delivery_channel, whatsapp_delivery_jid);
+        id,
+        display_name,
+        bot_token,
+        chat_id,
+        ai_prompt,
+        is_active !== undefined ? is_active : 1,
+        delivery_channel,
+        whatsapp_delivery_jid
+      );
 
-      const updatedCat = database.getAllCategories().find(c => c.id === parseInt(req.params.id));
-      if (updatedCat && bot_token && chat_id) {
-        try {
-          const oldBot = botInstances.get(updatedCat.slug);
-          if (oldBot) { await oldBot.stop(); botInstances.delete(updatedCat.slug); }
-          const newBot = new TelegramBotDispatcher(
-            bot_token, chat_id, database, summarizer, updatedCat.slug, ai_prompt || undefined
-          );
-          botInstances.set(updatedCat.slug, newBot);
-          await newBot.start();
-          scheduler.updateBotInstances(botInstances);
-          logger.info(`🔄 Hot-reloaded bot instance for category: ${updatedCat.slug}`);
-        } catch (botErr) {
-          logger.error(`Bot hot-reload failed for category "${updatedCat.slug}": ${botErr.message}`);
-        }
-      }
+      const updatedCat = database.getAllCategories().find(c => c.id === id);
+      syncCategoryRuntime(updatedCat, botInstances, scheduler, database, summarizer);
 
       res.json({ success: true });
     } catch (err) {
@@ -228,14 +265,17 @@ function startDashboardServer(database, whatsapp, telegramUser, scheduler, summa
 
   app.delete('/api/categories/:id', async (req, res) => {
     try {
+      const id = parseIdParam(req.params.id);
+      if (!id) return res.status(400).json({ error: 'Invalid ID' });
+
       const allCats = database.getAllCategories();
-      const cat = allCats.find(c => c.id === parseInt(req.params.id));
+      const cat = allCats.find(c => c.id === id);
 
       if (cat && (cat.slug === 'cc' || cat.slug === 'deals')) {
         return res.status(400).json({ error: 'Cannot delete built-in CC or Deals categories' });
       }
 
-      database.deleteCategory(req.params.id);
+      database.deleteCategory(id);
 
       if (cat && botInstances.has(cat.slug)) {
         try { await botInstances.get(cat.slug).stop(); } catch (e) { /* ignore */ }
@@ -248,6 +288,7 @@ function startDashboardServer(database, whatsapp, telegramUser, scheduler, summa
         catSources.forEach(s => database.deleteSource(s.id));
       }
 
+      scheduler.reload();
       res.json({ success: true });
     } catch (err) {
       res.status(500).json({ error: err.message });
@@ -256,7 +297,9 @@ function startDashboardServer(database, whatsapp, telegramUser, scheduler, summa
 
   app.post('/api/categories/:id/test', async (req, res) => {
     try {
-      const cat = database.getAllCategories().find(c => c.id === parseInt(req.params.id));
+      const id = parseIdParam(req.params.id);
+      if (!id) return res.status(400).json({ error: 'Invalid ID' });
+      const cat = database.getAllCategories().find(c => c.id === id);
       if (!cat) return res.status(404).json({ error: 'Category not found' });
       if (!cat.bot_token || !cat.chat_id) {
         return res.status(400).json({ error: 'Category must have a bot token and chat ID configured' });
@@ -274,17 +317,6 @@ function startDashboardServer(database, whatsapp, telegramUser, scheduler, summa
     }
   });
 
-  app.patch('/api/categories/:id/toggle', (req, res) => {
-    try {
-      const { is_active } = req.body;
-      database.toggleCategory(req.params.id, is_active);
-      res.json({ success: true });
-    } catch (err) {
-      res.status(500).json({ error: err.message });
-    }
-  });
-
-  // ─── Schedules CRUD ──────────────────────────────────────────────────────
   app.get('/api/schedules', (req, res) => {
     try {
       const rules = database.getAllScheduleRules();
@@ -306,8 +338,6 @@ function startDashboardServer(database, whatsapp, telegramUser, scheduler, summa
     }
   });
 
-  // FIX: /api/schedules/trigger MUST be registered BEFORE POST /api/schedules
-  // Otherwise Express matches "trigger" as the body of POST /api/schedules and returns an error.
   app.post('/api/schedules/trigger', async (req, res) => {
     try {
       const { slug } = req.body;
@@ -321,7 +351,6 @@ function startDashboardServer(database, whatsapp, telegramUser, scheduler, summa
     }
   });
 
-  // Keep legacy /api/trigger alias so any old bookmarks still work
   app.post('/api/trigger', async (req, res) => {
     try {
       const { slug } = req.body;
@@ -360,10 +389,11 @@ function startDashboardServer(database, whatsapp, telegramUser, scheduler, summa
 
   app.patch('/api/schedules/:id', (req, res) => {
     try {
+      const id = parseIdParam(req.params.id);
+      if (!id) return res.status(400).json({ error: 'Invalid ID' });
       const { cron_expression, label, is_active } = req.body;
-      // Allow toggle-only PATCH (only is_active, no cron/label required)
       if (is_active !== undefined && !cron_expression && !label) {
-        database.toggleScheduleRule(req.params.id, is_active ? 1 : 0);
+        database.toggleScheduleRule(id, is_active ? 1 : 0);
         scheduler.reload();
         return res.json({ success: true });
       }
@@ -375,11 +405,13 @@ function startDashboardServer(database, whatsapp, telegramUser, scheduler, summa
         return res.status(400).json({ error: `Invalid cron expression: "${cron_expression}"` });
       }
       database.updateScheduleRule(
-        req.params.id, cron_expression, label,
+        id,
+        cron_expression,
+        label,
         is_active !== undefined ? (is_active ? 1 : 0) : 1
       );
       scheduler.reload();
-      logger.info(`📅 Schedule rule #${req.params.id} updated.`);
+      logger.info(`📅 Schedule rule #${id} updated.`);
       res.json({ success: true });
     } catch (err) {
       res.status(500).json({ error: err.message });
@@ -388,11 +420,13 @@ function startDashboardServer(database, whatsapp, telegramUser, scheduler, summa
 
   app.patch('/api/schedules/:id/toggle', (req, res) => {
     try {
+      const id = parseIdParam(req.params.id);
+      if (!id) return res.status(400).json({ error: 'Invalid ID' });
       const { is_active } = req.body;
       if (is_active === undefined) return res.status(400).json({ error: 'Missing is_active' });
-      database.toggleScheduleRule(req.params.id, is_active ? 1 : 0);
+      database.toggleScheduleRule(id, is_active ? 1 : 0);
       scheduler.reload();
-      logger.info(`📅 Schedule rule #${req.params.id} toggled to ${is_active ? 'active' : 'paused'}.`);
+      logger.info(`📅 Schedule rule #${id} toggled to ${is_active ? 'active' : 'paused'}.`);
       res.json({ success: true });
     } catch (err) {
       res.status(500).json({ error: err.message });
@@ -401,16 +435,17 @@ function startDashboardServer(database, whatsapp, telegramUser, scheduler, summa
 
   app.delete('/api/schedules/:id', (req, res) => {
     try {
-      database.deleteScheduleRule(req.params.id);
+      const id = parseIdParam(req.params.id);
+      if (!id) return res.status(400).json({ error: 'Invalid ID' });
+      database.deleteScheduleRule(id);
       scheduler.reload();
-      logger.info(`📅 Schedule rule #${req.params.id} deleted.`);
+      logger.info(`📅 Schedule rule #${id} deleted.`);
       res.json({ success: true });
     } catch (err) {
       res.status(500).json({ error: err.message });
     }
   });
 
-  // ─── Telegram User Auth APIs ──────────────────────────────────────────────
   app.get('/api/telegram/status', (req, res) => {
     res.json({ isReady: telegramUser.isReady, tempPhone: telegramUser.tempPhone });
   });
@@ -464,7 +499,6 @@ function startDashboardServer(database, whatsapp, telegramUser, scheduler, summa
     }
   });
 
-  // ─── WhatsApp Sources Management ──────────────────────────────────────────
   app.get('/api/whatsapp/sources', (req, res) => {
     try {
       const allSources = database.getAllSources().filter(s => s.type.endsWith('-whatsapp'));
@@ -490,14 +524,15 @@ function startDashboardServer(database, whatsapp, telegramUser, scheduler, summa
 
   app.delete('/api/whatsapp/sources/:id', (req, res) => {
     try {
-      database.deleteSource(req.params.id);
+      const id = parseIdParam(req.params.id);
+      if (!id) return res.status(400).json({ error: 'Invalid ID' });
+      database.deleteSource(id);
       res.json({ success: true });
     } catch (err) {
       res.status(500).json({ error: err.message });
     }
   });
 
-  // ─── Session Cookies Manager APIs ─────────────────────────────────────────
   app.get('/api/cookies', (req, res) => {
     try {
       const SITES = ['youtube', 'technofino', 'desidime', 'reddit'];
@@ -572,7 +607,6 @@ function startDashboardServer(database, whatsapp, telegramUser, scheduler, summa
     }
   });
 
-  // Legacy import/delete endpoints (keep for backward compat)
   app.get('/api/cookies/status', (req, res) => {
     const SITES = ['youtube', 'technofino', 'desidime', 'reddit'];
     const result = {};
@@ -653,7 +687,6 @@ async function main() {
   validateConfig();
 
   const database = new MessageDatabase();
-
   database.seedDefaultCategories(
     process.env.TELEGRAM_BOT_TOKEN,
     process.env.TELEGRAM_CHAT_ID,
@@ -664,11 +697,14 @@ async function main() {
   const summarizer = new Summarizer(process.env.GEMINI_API_KEY, process.env.OPENROUTER_API_KEY);
   const botInstances = createBotInstances(database, summarizer);
 
+  const whatsapp = new WhatsAppListener(database, null);
+  const telegramUser = new TelegramUserListener(database, null);
+  const scheduler = new Scheduler(summarizer, botInstances, database, whatsapp);
+
   const sendSystemAlert = async (message) => {
     logger.warn(`🚨 [System Alert] ${message}`);
     const plainMessage = message.replace(/<[^>]*>/g, '');
 
-    // Send to Telegram
     const ccBotInstance = botInstances.get('cc');
     if (ccBotInstance) {
       try {
@@ -678,7 +714,6 @@ async function main() {
       }
     }
 
-    // Send to WhatsApp Admin
     const adminJid = process.env.WHATSAPP_ADMIN_JID;
     if (adminJid) {
       try {
@@ -689,23 +724,21 @@ async function main() {
     }
   };
 
-  const whatsapp = new WhatsAppListener(database, sendSystemAlert);
-  const telegramUser = new TelegramUserListener(database, sendSystemAlert);
-  const scheduler = new Scheduler(summarizer, botInstances, database, whatsapp);
+  whatsapp.onAlert = sendSystemAlert;
+  telegramUser.onAlert = sendSystemAlert;
 
-  // Global restart function for critical failures
   global.restartWhatsApp = async (force = false) => {
     logger.warn('🔄 Received global request to restart WhatsApp client...');
     await whatsapp.stop();
     if (force) {
-        const authPath = path.resolve(__dirname, '../data/baileys_auth');
-        if (fs.existsSync(authPath)) {
-            fs.rmSync(authPath, { recursive: true, force: true });
-            logger.info('🧹 Forcing clean session. Cleared baileys_auth credentials folder.');
-        }
+      const authPath = path.resolve(__dirname, '../data/baileys_auth');
+      if (fs.existsSync(authPath)) {
+        fs.rmSync(authPath, { recursive: true, force: true });
+        logger.info('🧹 Forcing clean session. Cleared baileys_auth credentials folder.');
+      }
     }
     setTimeout(() => {
-        whatsapp.start().catch(err => logger.error(`WhatsApp restart failed: ${err.message}`));
+      whatsapp.start().catch(err => logger.error(`WhatsApp restart failed: ${err.message}`));
     }, 5000);
   };
 
@@ -719,6 +752,7 @@ async function main() {
     technofino: forumScraper,
     desidime: dealsScraper,
   };
+
   const healthServer = startDashboardServer(
     database, whatsapp, telegramUser, scheduler, summarizer, botInstances, scrapers
   );
