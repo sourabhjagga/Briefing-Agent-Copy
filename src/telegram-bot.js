@@ -14,28 +14,23 @@ function esc(str) {
 
 function sanitizeMarkdown(text) {
     const tagStack = [];
-    // Regex to find all HTML-like tags
     let result = text.replace(/<\/?[a-z][a-z0-9]*\b[^>]*>/gi, (tag, offset, string) => {
         const tagName = tag.match(/<\/?([a-z]+)/i)[1].toLowerCase();
         const isClosing = tag.startsWith('</');
 
         if (isClosing) {
-            // If the closing tag matches the top of the stack, pop it
             if (tagStack.length > 0 && tagStack[tagStack.length - 1] === tagName) {
                 tagStack.pop();
                 return tag;
             } else {
-                // Mismatched closing tag, discard it
                 return '';
             }
         } else {
-            // Opening tag, push to stack
             tagStack.push(tagName);
             return tag;
         }
     });
     
-    // Close any remaining unclosed tags at the end
     while (tagStack.length > 0) {
         const unclosedTag = tagStack.pop();
         result += `</${unclosedTag}>`;
@@ -52,7 +47,7 @@ function splitMessage(text) {
     }
 
     const chunks = [];
-    let currentChunk = "";
+    let currentChunk = '';
 
     const lines = text.split('\n');
     for (const line of lines) {
@@ -60,7 +55,7 @@ function splitMessage(text) {
             chunks.push(currentChunk);
             currentChunk = line;
         } else {
-            currentChunk += (currentChunk.length > 0 ? "\n" : "") + line;
+            currentChunk += (currentChunk.length > 0 ? '\n' : '') + line;
         }
     }
     if (currentChunk.length > 0) {
@@ -82,7 +77,6 @@ class TelegramBotDispatcher {
     this.sourcePrefix = sourcePrefix;
     this.customPrompt = customPrompt;
     
-    // Enable interactive polling only if database & summarizer are provided
     this.interactive = !!(database && summarizer);
     
     let agent;
@@ -124,7 +118,6 @@ class TelegramBotDispatcher {
   }
 
   _setupCommands() {
-    // Guard middleware to ensure only the owner chat can trigger commands
     this.bot.use(async (ctx, next) => {
       const currentChatId = String(ctx.chat?.id);
       if (currentChatId !== String(this.chatId)) {
@@ -134,7 +127,6 @@ class TelegramBotDispatcher {
       await next();
     });
 
-    // /start & /help
     this.bot.command(['start', 'help'], async (ctx) => {
       await ctx.replyWithHTML(
         `🤖 <b>${this.sourcePrefix === 'cc' ? 'Credit Card' : 'Hot Deals'} Briefing Bot</b>\n\n` +
@@ -151,7 +143,6 @@ class TelegramBotDispatcher {
       );
     });
 
-    // /brief
     this.bot.command('brief', async (ctx) => {
       await ctx.reply('⏳ Generating today\'s brief from all monitored groups. Please wait...');
       try {
@@ -168,7 +159,6 @@ class TelegramBotDispatcher {
       }
     });
 
-    // /ask <query>
     this.bot.hears(/^\/ask\s+(.+)$/i, async (ctx) => {
       const question = ctx.match[1];
       await ctx.reply('🔍 Searching and analyzing message repository...');
@@ -180,7 +170,6 @@ class TelegramBotDispatcher {
           allMessages.push(...msgs);
         }
         
-        // Deduplicate messages
         const seen = new Set();
         allMessages = allMessages.filter(m => {
           const key = `${m.timestamp}-${m.body?.substring(0, 50)}`;
@@ -197,7 +186,6 @@ class TelegramBotDispatcher {
       }
     });
 
-    // /search <keyword>
     this.bot.hears(/^\/search\s+(.+)$/i, async (ctx) => {
       const keyword = ctx.match[1];
       try {
@@ -220,7 +208,6 @@ class TelegramBotDispatcher {
       }
     });
 
-    // /stats
     this.bot.command('stats', async (ctx) => {
       try {
         const stats = this.database.getStats(7, this.sourcePrefix);
@@ -237,7 +224,6 @@ class TelegramBotDispatcher {
       }
     });
 
-    // /groups
     this.bot.command('groups', async (ctx) => {
       try {
         const allSources = this.database.getAllSources().filter(s => s.type.startsWith(this.sourcePrefix + '-'));
@@ -275,7 +261,6 @@ class TelegramBotDispatcher {
       }
     });
 
-    // /status
     this.bot.command('status', async (ctx) => {
       try {
         const today = this.database.getTodayMessageCount(this.sourcePrefix);
@@ -303,7 +288,6 @@ class TelegramBotDispatcher {
       }
     });
 
-    // /total
     this.bot.command('total', async (ctx) => {
       try {
         const stats = this.database.getStats(365, this.sourcePrefix);
@@ -319,7 +303,6 @@ class TelegramBotDispatcher {
       }
     });
 
-    // /test
     this.bot.command('test', async (ctx) => {
       await ctx.reply('⏳ Requesting latest message verification status across all sources...');
       try {
@@ -336,25 +319,8 @@ class TelegramBotDispatcher {
           const cleanName = s.name.replace(/\s*\(Telegram\)|\s*\(Reddit\)|\s*\(YouTube\)|\s*Recent Posts|\s*VIP Lounge|\s*Credit Cards Hub/gi, '').trim().toLowerCase();
           const cleanSourceId = s.source_id.trim().replace('@', '').toLowerCase();
 
-          const lastMsg = this.database.db.prepare(`
-            SELECT body, timestamp, sender_name
-            FROM messages
-            WHERE source_type = ? 
-              AND (
-                LOWER(group_name) LIKE ? 
-                OR LOWER(group_id) = ? 
-                OR LOWER(group_id) LIKE ?
-                OR LOWER(message_id) LIKE ?
-              )
-            ORDER BY timestamp DESC
-            LIMIT 1
-          `).get(
-            s.type, 
-            `%${cleanName}%`, 
-            cleanSourceId, 
-            `%${cleanSourceId}%`,
-            `%${cleanSourceId}%`
-          );
+          // Use compiled database method — avoids re-compilation on every /test call
+          const lastMsg = this.database.getLatestMessageForSource(s.type, cleanName, cleanSourceId);
 
           let icon = '👥';
           if (s.type.includes('forum')) icon = '🌐';
@@ -394,7 +360,6 @@ class TelegramBotDispatcher {
           parse_mode: 'HTML',
           link_preview_options: { is_disabled: true }
         });
-        // 800ms throttle buffer between multi-part messages to respect flood limits
         if (chunks.length > 1) {
           await new Promise(r => setTimeout(r, 800));
         }
@@ -403,7 +368,6 @@ class TelegramBotDispatcher {
       return true;
     } catch (error) {
       logger.error(`Failed to dispatch Telegram message: ${error.message}`);
-      // Fallback to pure text strip if HTML is corrupted
       try {
         const plain = text.replace(/<[^>]*>/g, '');
         const chunks = splitMessage(plain);
@@ -438,8 +402,6 @@ class TelegramBotDispatcher {
       `Type /help to see commands or /status to inspect active groups.`;
     return this.sendMessage(msg);
   }
-
-
 
   async stop() {
     this.bot.stop();

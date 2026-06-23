@@ -1,0 +1,249 @@
+/**
+ * Telegram User Listener Module
+ * Connects as a real Telegram user session (MTProto) using gramjs (Puppeteer-free).
+ * Supports OTP, 2FA verification, channel discovery, and private channel scraping.
+ */
+
+const { TelegramClient, Api, password } = require('telegram');
+const { StringSession } = require('telegram/sessions');
+const fs = require('fs');
+const path = require('path');
+const logger = require('./logger');
+
+class TelegramUserListener {
+  constructor(database, onAlert) {
+    this.database = database;
+    this.onAlert = onAlert;
+    this.sessionPath = path.resolve(__dirname, '../data/telegram_user_session.txt');
+    
+    // Load API credentials strictly from environment — no hardcoded fallbacks.
+    // Ensure TELEGRAM_API_ID and TELEGRAM_API_HASH are set in your .env file.
+    // Get them from: https://my.telegram.org/apps
+    const apiId = parseInt(process.env.TELEGRAM_API_ID || '0', 10);
+    const apiHash = process.env.TELEGRAM_API_HASH || '';
+
+    if (!apiId || !apiHash) {
+      throw new Error('TELEGRAM_API_ID and TELEGRAM_API_HASH must be set in environment. Get them from https://my.telegram.org/apps');
+    }
+    
+    this.apiId = apiId;
+    this.apiHash = apiHash;
+    
+    let initialSession = '';
+    if (fs.existsSync(this.sessionPath)) {
+      initialSession = fs.readFileSync(this.sessionPath, 'utf8').trim();
+    }
+    
+    const clientOptions = {
+      connectionRetries: 10,
+      requestRetries: 5,
+      useWSS: false,
+    };
+
+    const proxyUrl = process.env.TELEGRAM_PROXY;
+    if (proxyUrl) {
+      const url = require('url');
+      const parsed = url.parse(proxyUrl);
+      clientOptions.proxy = {
+        ip: parsed.hostname,
+        port: parseInt(parsed.port, 10),
+        socksType: 5,
+      };
+      if (parsed.auth) {
+        const [username, pass] = parsed.auth.split(':');
+        clientOptions.proxy.username = username;
+        clientOptions.proxy.password = pass;
+      }
+      logger.info(`🔌 Routing Telegram User through SOCKS5 proxy: ${parsed.hostname}:${parsed.port}`);
+    }
+
+    this.session = new StringSession(initialSession);
+    this.client = new TelegramClient(this.session, this.apiId, this.apiHash, clientOptions);
+    this.isListening = false;
+    this.tempPhone = null;
+    this.tempPhoneCodeHash = null;
+    this.tempResolver = null;
+  }
+
+  async start() {
+    try {
+      logger.info('📱 Starting Telegram User client...');
+      await this.client.connect();
+      const isAuthorized = await this.client.isUserAuthorized();
+      if (isAuthorized) {
+        logger.info('✅ Telegram User client authorized. Attaching message listener...');
+        await this._attachListener();
+        this.isListening = true;
+        return true;
+      } else {
+        logger.warn('⚠️ Telegram User client NOT authorized. Dashboard login required.');
+        return false;
+      }
+    } catch (err) {
+      logger.error(`Telegram User client start failed: ${err.message}`);
+      return false;
+    }
+  }
+
+  async sendCode(phoneNumber) {
+    this.tempPhone = phoneNumber;
+    try {
+      const result = await this.client.invoke(new Api.auth.SendCode({
+        phoneNumber,
+        apiId: this.apiId,
+        apiHash: this.apiHash,
+        settings: new Api.CodeSettings({ allowFlashcall: false, currentNumber: true, allowAppHash: true }),
+      }));
+      this.tempPhoneCodeHash = result.phoneCodeHash;
+      logger.info(`📱 Telegram OTP sent to ${phoneNumber}`);
+      return { success: true };
+    } catch (err) {
+      logger.error(`sendCode error: ${err.message}`);
+      return { success: false, error: err.message };
+    }
+  }
+
+  async submitCode(code, twoFactorPassword = '') {
+    if (!this.tempPhone || !this.tempPhoneCodeHash) {
+      throw new Error('No active login session. Please send code first.');
+    }
+    try {
+      await this.client.invoke(new Api.auth.SignIn({
+        phoneNumber: this.tempPhone,
+        phoneCodeHash: this.tempPhoneCodeHash,
+        phoneCode: code,
+      }));
+    } catch (err) {
+      if (err.errorMessage === 'SESSION_PASSWORD_NEEDED') {
+        if (!twoFactorPassword) {
+          throw new Error('2FA is enabled on this account. Please enter your 2FA password.');
+        }
+        const passwordInfo = await this.client.invoke(new Api.account.GetPassword());
+        const passwordCheck = await password.computeCheck(passwordInfo, twoFactorPassword);
+        await this.client.invoke(new Api.auth.CheckPassword({ password: passwordCheck }));
+      } else {
+        throw err;
+      }
+    }
+
+    const sessionString = this.client.session.save();
+    fs.writeFileSync(this.sessionPath, sessionString, 'utf8');
+    logger.info('✅ Telegram User session saved to disk.');
+
+    await this._attachListener();
+    this.isListening = true;
+    this.tempPhone = null;
+    this.tempPhoneCodeHash = null;
+    return { success: true };
+  }
+
+  async logout() {
+    try {
+      await this.client.invoke(new Api.auth.LogOut());
+    } catch (e) { /* ignore */ }
+    if (fs.existsSync(this.sessionPath)) {
+      fs.unlinkSync(this.sessionPath);
+    }
+    this.isListening = false;
+    this.session = new StringSession('');
+    this.client = new TelegramClient(this.session, this.apiId, this.apiHash, { connectionRetries: 5 });
+    logger.info('✅ Telegram User logged out and session cleared.');
+    return { success: true };
+  }
+
+  getStatus() {
+    return {
+      isReady: this.isListening,
+      tempPhone: this.tempPhone || null,
+    };
+  }
+
+  async _attachListener() {
+    const { NewMessage } = require('telegram/events');
+
+    this.client.addEventHandler(async (event) => {
+      try {
+        const msg = event.message;
+        if (!msg || !msg.peerId) return;
+
+        const chat = await event.getChat();
+        if (!chat) return;
+
+        const chatId = String(chat.id || '');
+        const chatTitle = chat.title || chat.username || chat.firstName || 'Unknown';
+        let chatUsername = chat.username ? `@${chat.username}` : chatId;
+
+        // Determine source type based on registered sources
+        const allSources = this.database.getAllSources().filter(s => s.is_active === 1);
+        let matchedSource = null;
+        for (const src of allSources) {
+          if (!src.type.includes('telegram')) continue;
+          const srcId = src.source_id.replace('@', '').toLowerCase();
+          const thisChatId = chatId.toLowerCase();
+          const thisUsername = (chat.username || '').toLowerCase();
+          if (srcId === thisChatId || srcId === thisUsername || thisUsername.includes(srcId) || thisChatId.includes(srcId)) {
+            matchedSource = src;
+            break;
+          }
+        }
+
+        if (!matchedSource) return;
+
+        const bodyText = msg.message || '';
+        if (!bodyText.trim()) return;
+
+        const senderId = msg.fromId ? String(msg.fromId.userId || msg.fromId.channelId || '') : '';
+        const senderName = (msg.from?.firstName || msg.from?.username || chat.title || 'Channel');
+
+        const messageData = {
+          message_id: `tguser-${chatId}-${msg.id}`,
+          group_id: chatId,
+          group_name: chatTitle,
+          chat_type: chat.className === 'Channel' ? (chat.megagroup ? 'forum' : 'channel') : 'group',
+          sender_name: senderName,
+          sender_id: senderId,
+          body: bodyText,
+          timestamp: msg.date,
+          source_type: matchedSource.type,
+          is_reply: msg.replyTo ? 1 : 0,
+          reply_to: msg.replyTo ? String(msg.replyTo.replyToMsgId) : null,
+          media_type: msg.media ? msg.media.className : null,
+          url: null,
+        };
+
+        const inserted = this.database.insertMessage(messageData);
+        if (inserted) {
+          logger.info(`📨 [TGUser] New message from ${chatTitle} (${matchedSource.type}): ${bodyText.substring(0, 80)}`);
+        }
+      } catch (err) {
+        logger.error(`Error processing Telegram user message: ${err.message}`);
+      }
+    }, new NewMessage({}));
+
+    logger.info('✅ Telegram User message listener attached.');
+  }
+
+  async discoverGroups() {
+    try {
+      const dialogs = await this.client.getDialogs({ limit: 100 });
+      const groups = [];
+      for (const d of dialogs) {
+        if (d.isGroup || d.isChannel) {
+          groups.push({
+            id: String(d.id),
+            title: d.title,
+            username: d.entity?.username || null,
+            type: d.isChannel ? 'channel' : 'group',
+            participantsCount: d.entity?.participantsCount || 0,
+          });
+        }
+      }
+      return groups;
+    } catch (err) {
+      logger.error(`discoverGroups error: ${err.message}`);
+      return [];
+    }
+  }
+}
+
+module.exports = TelegramUserListener;
