@@ -7,13 +7,13 @@ WORKDIR /app
 # Skip chromium download in builder stage — system Chromium is used at runtime
 ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
 
-# Copy package descriptors — package-lock.json must be committed to the repo
+# Copy package descriptors
 COPY package*.json ./
 
-# Use npm ci (respects package-lock.json for reproducible installs)
+# Install dependencies with npm install (no package-lock.json required)
 # --foreground-scripts ensures native addon postinstall scripts run correctly as root
 RUN --mount=type=cache,target=/root/.npm \
-    npm ci --foreground-scripts
+    npm install --foreground-scripts
 
 # Copy source files and static assets
 COPY src/ ./src
@@ -29,9 +29,9 @@ FROM node:20-slim@sha256:2cf067cfed83d5ea958367df9f966191a942351a2df77d6f0193e16
 WORKDIR /app
 
 # Set production environment variables
+# PUPPETEER_* must be set before any RUN step to prevent Chromium auto-download
 ENV NODE_ENV=production \
     PORT=3000 \
-    # Tell Puppeteer to skip its own Chromium download and use the system binary
     PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true \
     PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
 
