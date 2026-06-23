@@ -4,6 +4,8 @@ on:
   push:
     branches: [ "main" ]
   workflow_dispatch:
+  repository_dispatch:
+    types: [ docker-publish ]
 
 jobs:
   build-and-push:
@@ -24,12 +26,19 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
+      # FIX: use hardcoded lowercase image name instead of
+      # ${{ secrets.DOCKERHUB_USERNAME }}/... — Docker Hub rejects
+      # uppercase characters in image names, causing silent push failures.
+      # A versioned SHA tag is added alongside :latest so Coolify's image
+      # polling can detect real changes even when :latest digest is cached.
       - name: Build and push
         uses: docker/build-push-action@v6
         with:
           context: .
           platforms: linux/amd64,linux/arm64
           push: true
-          tags: ${{ secrets.DOCKERHUB_USERNAME }}/briefing-agent-fresh:latest
+          tags: |
+            sourabhjagga/briefing-agent-fresh:latest
+            sourabhjagga/briefing-agent-fresh:${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
