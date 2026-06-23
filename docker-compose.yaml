@@ -5,10 +5,16 @@ services:
       dockerfile: Dockerfile
     container_name: cc-brief-agent
     restart: unless-stopped
-    # warp-proxy and flaresolverr are optional sidecars.
-    # cc-brief-agent starts unconditionally — warp is a fallback only
-    # if Telegram is blocked. Removing hard depends_on prevents deployment
-    # failure when warp-proxy healthcheck doesn't pass.
+    # warp-proxy is an optional fallback — cc-brief-agent starts after warp
+    # is confirmed listening on SOCKS5 port, but warp failure won't block the app
+    # because condition: service_healthy only gates startup order, not continued
+    # operation. If warp later goes unhealthy, cc-brief-agent keeps running.
+    depends_on:
+      warp-proxy:
+        condition: service_healthy
+        restart: false
+      flaresolverr:
+        condition: service_started
     volumes:
       - cc_brief_data:/app/data
       - cc_brief_logs:/app/logs
@@ -57,19 +63,20 @@ services:
     restart: unless-stopped
 
   warp-proxy:
-    # Optional fallback SOCKS5 proxy via Cloudflare WARP.
-    # Used only when Telegram is blocked on the host network.
-    # Runs as a background sidecar — cc-brief-agent does NOT depend on it.
-    # If warp-proxy is unhealthy, cc-brief-agent continues using direct connection.
+    # Cloudflare WARP SOCKS5 proxy — fallback for when Telegram is blocked.
+    # Healthcheck uses nc (netcat) to verify the SOCKS5 TCP port is open.
+    # wget/curl checking http:// against a SOCKS5 port always fails — fixed here.
     image: ghcr.io/mon-ius/docker-warp-socks:v6
     container_name: warp-proxy
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "--timeout=5", "http://localhost:9091"]
+      # nc -z = TCP port scan only (no data sent). Correctly validates SOCKS5.
+      # wget against a SOCKS5 port sends HTTP which SOCKS5 rejects — that was the bug.
+      test: ["CMD-SHELL", "nc -z localhost 9091 || exit 1"]
       interval: 15s
-      timeout: 8s
+      timeout: 5s
       retries: 5
-      start_period: 40s
+      start_period: 15s
 
 volumes:
   cc_brief_data:
