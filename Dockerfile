@@ -34,6 +34,7 @@ ENV NODE_ENV=production
 ENV PORT=3000
 
 # Install Chromium, system dependencies for Puppeteer, and yt-dlp (YouTube audio downloader)
+# Note: libasound2 was renamed to libasound2t64 in Debian Bookworm (node:20-slim base)
 RUN apt-get update && apt-get install -y \
     chromium \
     libnss3 \
@@ -49,7 +50,7 @@ RUN apt-get update && apt-get install -y \
     libxfixes3 \
     libxrandr2 \
     libgbm1 \
-    libasound2 \
+    libasound2t64 \
     python3 \
     python3-pip \
     ffmpeg \
@@ -57,6 +58,7 @@ RUN apt-get update && apt-get install -y \
     && pip3 install yt-dlp --break-system-packages \
     && rm -rf /var/lib/apt/lists/* /root/.cache/pip
 
+# Tell Puppeteer to use system Chromium instead of downloading its own
 ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
 ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
 
