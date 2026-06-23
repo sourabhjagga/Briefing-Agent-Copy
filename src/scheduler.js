@@ -143,8 +143,6 @@ class Scheduler {
       
       if (shouldSendWhatsApp) {
         const plainSummary = summary.replace(/<[^>]*>/g, '');
-        
-        // Use category-specific delivery JID if configured, else fall back to admin JID
         const deliveryJid = category?.whatsapp_delivery_jid || adminJid;
         
         if (deliveryJid) {
@@ -164,9 +162,18 @@ class Scheduler {
         await telegramInstance.sendMessage(summary);
       }
 
-      if (sourcePrefix === 'cc') {
-        this.database.saveSummary(today, messages.length, summary, true);
-        this.database.saveBrief(today, summary, messages.length);
+      // FIX: Persist briefs and summaries for ALL categories, not just 'cc'.
+      // Use category slug as a scope key so each category maintains its own history.
+      try {
+        if (typeof this.database.saveSummary === 'function') {
+          this.database.saveSummary(today, messages.length, summary, true, sourcePrefix);
+        }
+        if (typeof this.database.saveBrief === 'function') {
+          this.database.saveBrief(today, summary, messages.length, sourcePrefix);
+        }
+        logger.info(`[${sourcePrefix}] Brief and summary persisted to database.`);
+      } catch (dbErr) {
+        logger.warn(`[${sourcePrefix}] Could not persist brief to database: ${dbErr.message}`);
       }
       
       logger.info(`=== ${sourcePrefix.toUpperCase()} BRIEFING COMPLETED ===`);
