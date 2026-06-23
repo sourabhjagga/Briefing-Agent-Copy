@@ -201,6 +201,8 @@ function SourcesSection() {
 
   useEffect(() => { load(); }, [load]);
 
+  // FIX #1 (sources): toggle uses PATCH /api/sources/:id — this was already correct.
+  // Sends only {is_active} so backend handles it cleanly.
   const toggle = async (id, current) => {
     await api.patch(`/api/sources/${id}`, { is_active: !current });
     setSources(s => s.map(x => x.id === id ? { ...x, is_active: !current ? 1 : 0 } : x));
@@ -221,64 +223,89 @@ function SourcesSection() {
   };
 
   const filtered = sources.filter(s =>
-    !filter || s.name.toLowerCase().includes(filter.toLowerCase()) || s.type.toLowerCase().includes(filter.toLowerCase())
+    !filter || s.name?.toLowerCase().includes(filter.toLowerCase()) || s.type?.toLowerCase().includes(filter.toLowerCase())
   );
 
-  // Build type options from categories
-  const typeOptions = ['cc-whatsapp', 'deals-whatsapp', 'cc-telegram', 'deals-telegram', ...categories.map(c => c.slug + '-whatsapp'), ...categories.map(c => c.slug + '-telegram')];
-  const uniqueTypes = [...new Set(typeOptions)];
+  if (loading) return React.createElement(Spinner);
+
+  const typeOptions = [
+    { value: 'cc-telegram', label: 'CC — Telegram' },
+    { value: 'cc-whatsapp', label: 'CC — WhatsApp' },
+    { value: 'cc-forum', label: 'CC — Forum (TechnoFino)' },
+    { value: 'deals-telegram', label: 'Deals — Telegram' },
+    { value: 'deals-whatsapp', label: 'Deals — WhatsApp' },
+    { value: 'deals-reddit', label: 'Deals — Reddit' },
+    { value: 'deals-youtube', label: 'Deals — YouTube' },
+    { value: 'deals-forum', label: 'Deals — Forum (DesiDime)' },
+    ...categories
+      .filter(c => c.slug !== 'cc' && c.slug !== 'deals')
+      .flatMap(c => [
+        { value: `${c.slug}-telegram`, label: `${c.display_name} — Telegram` },
+        { value: `${c.slug}-whatsapp`, label: `${c.display_name} — WhatsApp` },
+      ]),
+  ];
 
   return React.createElement('div', { className: 'section-content' },
-    React.createElement('div', { className: 'toolbar' },
+    React.createElement('div', { className: 'section-toolbar' },
       React.createElement('input', {
-        className: 'search-input', placeholder: 'Filter sources…', value: filter,
-        onChange: e => setFilter(e.target.value)
+        className: 'input search-input',
+        placeholder: '🔍 Filter sources…',
+        value: filter,
+        onChange: e => setFilter(e.target.value),
       }),
       React.createElement('button', { className: 'btn btn-primary', onClick: () => setShowAdd(true) }, '+ Add Source')
     ),
 
-    loading ? React.createElement(Spinner) :
-    React.createElement(Card, null,
+    React.createElement(Card, { title: `Sources (${filtered.length})` },
       filtered.length === 0
-        ? React.createElement(EmptyState, { icon: '📡', message: 'No sources found', sub: 'Add your first WhatsApp group or Telegram channel' })
+        ? React.createElement(EmptyState, { icon: '📡', message: 'No sources found', sub: filter ? 'Try a different filter' : 'Add a source to get started' })
         : React.createElement('div', { className: 'table-wrap' },
             React.createElement('table', { className: 'data-table' },
               React.createElement('thead', null,
                 React.createElement('tr', null,
-                  ['Name', 'Source ID', 'Type', 'Active', 'Added', 'Actions'].map(h => React.createElement('th', { key: h }, h))
+                  ['Name', 'Source ID', 'Type', 'Active', 'Actions'].map(h =>
+                    React.createElement('th', { key: h }, h)
+                  )
                 )
               ),
               React.createElement('tbody', null,
-                filtered.map(s => React.createElement('tr', { key: s.id, className: s.is_active ? '' : 'row-inactive' },
-                  React.createElement('td', null, React.createElement('strong', null, s.name)),
-                  React.createElement('td', null, React.createElement('code', { className: 'source-id' }, s.source_id)),
-                  React.createElement('td', null, React.createElement(Badge, { label: s.type, variant: 'info' })),
-                  React.createElement('td', null, React.createElement(Toggle, { checked: !!s.is_active, onChange: () => toggle(s.id, !!s.is_active) })),
-                  React.createElement('td', null, React.createElement('span', { className: 'text-muted' }, timeAgo(s.created_at))),
-                  React.createElement('td', null,
-                    React.createElement('button', { className: 'btn btn-sm btn-danger', onClick: () => del(s.id, s.name) }, 'Delete')
+                filtered.map(s =>
+                  React.createElement('tr', { key: s.id },
+                    React.createElement('td', null, s.name),
+                    React.createElement('td', null, React.createElement('code', { className: 'source-id' }, s.source_id)),
+                    React.createElement('td', null, React.createElement(Badge, { label: s.type, variant: 'info' })),
+                    React.createElement('td', null,
+                      React.createElement(Toggle, { checked: !!s.is_active, onChange: () => toggle(s.id, !!s.is_active) })
+                    ),
+                    React.createElement('td', null,
+                      React.createElement('button', { className: 'btn btn-sm btn-danger', onClick: () => del(s.id, s.name) }, 'Delete')
+                    )
                   )
-                ))
+                )
               )
             )
           )
     ),
 
     React.createElement(Modal, { open: showAdd, title: 'Add Source', onClose: () => setShowAdd(false) },
-      React.createElement('div', { className: 'form-grid' },
+      React.createElement('div', { className: 'form-group' },
         React.createElement('label', { className: 'form-label' }, 'Display Name'),
-        React.createElement('input', { className: 'form-input', placeholder: 'e.g. DesiDime Deals', value: form.name, onChange: e => setForm(f => ({ ...f, name: e.target.value })) }),
-        React.createElement('label', { className: 'form-label' }, 'Source ID (Group JID / Channel ID)'),
-        React.createElement('input', { className: 'form-input', placeholder: 'e.g. 1234567890@g.us', value: form.source_id, onChange: e => setForm(f => ({ ...f, source_id: e.target.value })) }),
+        React.createElement('input', { className: 'input', placeholder: 'e.g. CC India TF', value: form.name, onChange: e => setForm(f => ({ ...f, name: e.target.value })) })
+      ),
+      React.createElement('div', { className: 'form-group' },
+        React.createElement('label', { className: 'form-label' }, 'Source ID'),
+        React.createElement('input', { className: 'input', placeholder: 'Telegram channel username or WhatsApp JID', value: form.source_id, onChange: e => setForm(f => ({ ...f, source_id: e.target.value })) })
+      ),
+      React.createElement('div', { className: 'form-group' },
         React.createElement('label', { className: 'form-label' }, 'Type'),
-        React.createElement('select', { className: 'form-input', value: form.type, onChange: e => setForm(f => ({ ...f, type: e.target.value })) },
+        React.createElement('select', { className: 'input', value: form.type, onChange: e => setForm(f => ({ ...f, type: e.target.value })) },
           React.createElement('option', { value: '' }, '— Select type —'),
-          uniqueTypes.map(t => React.createElement('option', { key: t, value: t }, t))
-        ),
-        React.createElement('div', { className: 'form-actions' },
-          React.createElement('button', { className: 'btn btn-ghost', onClick: () => setShowAdd(false) }, 'Cancel'),
-          React.createElement('button', { className: 'btn btn-primary', onClick: add }, 'Add Source')
+          typeOptions.map(o => React.createElement('option', { key: o.value, value: o.value }, o.label))
         )
+      ),
+      React.createElement('div', { className: 'modal-actions' },
+        React.createElement('button', { className: 'btn btn-ghost', onClick: () => setShowAdd(false) }, 'Cancel'),
+        React.createElement('button', { className: 'btn btn-primary', onClick: add }, 'Add Source')
       )
     )
   );
@@ -286,303 +313,398 @@ function SourcesSection() {
 
 // ─── Section: Categories ──────────────────────────────────────
 function CategoriesSection() {
-  const [cats, setCats] = useState([]);
+  const [categories, setCategories] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showAdd, setShowAdd] = useState(false);
-  const [editCat, setEditCat] = useState(null);
-  const emptyForm = { slug: '', display_name: '', bot_token: '', chat_id: '', ai_prompt: '', delivery_channel: 'telegram', whatsapp_delivery_jid: '' };
-  const [form, setForm] = useState(emptyForm);
+  const [editTarget, setEditTarget] = useState(null);
+  const [form, setForm] = useState({ slug: '', display_name: '', bot_token: '', chat_id: '', ai_prompt: '', delivery_channel: 'telegram', whatsapp_delivery_jid: '' });
+  const [testing, setTesting] = useState(null);
 
   const load = useCallback(async () => {
-    try { const c = await api.get('/api/categories'); setCats(Array.isArray(c) ? c : []); }
-    catch (e) { toast('Failed to load categories', 'error'); }
+    try {
+      const c = await api.get('/api/categories');
+      setCategories(Array.isArray(c) ? c : []);
+    } catch (e) { toast('Failed to load categories', 'error'); }
     finally { setLoading(false); }
   }, []);
 
   useEffect(() => { load(); }, [load]);
 
-  const toggle = async (cat) => {
-    const r = await api.patch(`/api/categories/${cat.id}`, { is_active: !cat.is_active });
-    if (r.success) { toast(`Category ${!cat.is_active ? 'activated' : 'deactivated'}`); load(); }
-    else toast(r.error || 'Toggle failed', 'error');
+  // FIX #1 (categories): toggle now calls PATCH /api/categories/:id with ONLY {is_active}.
+  // Previously called PATCH /api/categories/:id/toggle which does NOT exist on the backend.
+  // Sending only {is_active} triggers the isToggleOnly fast-path in the backend handler,
+  // which calls database.toggleCategory() and reloads the scheduler — no other fields needed.
+  const toggle = async (id, current) => {
+    const r = await api.patch(`/api/categories/${id}`, { is_active: !current });
+    if (r.success) {
+      setCategories(c => c.map(x => x.id === id ? { ...x, is_active: !current ? 1 : 0 } : x));
+    } else {
+      toast(r.error || 'Toggle failed', 'error');
+    }
   };
 
-  const del = async (cat) => {
-    if (!confirm(`Delete category "${cat.display_name}"? This will also remove all associated sources and schedules.`)) return;
-    const r = await api.del(`/api/categories/${cat.id}`);
+  const del = async (id, name, slug) => {
+    if (slug === 'cc' || slug === 'deals') { toast('Cannot delete built-in categories', 'error'); return; }
+    if (!confirm(`Delete category "${name}"? All associated sources will also be removed.`)) return;
+    const r = await api.del(`/api/categories/${id}`);
     if (r.success) { toast('Category deleted'); load(); }
     else toast(r.error || 'Delete failed', 'error');
   };
 
-  const testBot = async (cat) => {
-    toast('Sending test message…');
-    const r = await api.post(`/api/categories/${cat.id}/test`, {});
-    if (r.success) toast('✅ Test message sent!');
-    else toast(r.error || 'Test failed', 'error');
-  };
-
   const openEdit = (cat) => {
-    setEditCat(cat);
+    setEditTarget(cat);
     setForm({
       slug: cat.slug,
-      display_name: cat.display_name,
+      display_name: cat.display_name || '',
       bot_token: cat.bot_token || '',
       chat_id: cat.chat_id || '',
       ai_prompt: cat.ai_prompt || '',
+      // FIX #4: preserve delivery_channel and whatsapp_delivery_jid on edit
       delivery_channel: cat.delivery_channel || 'telegram',
       whatsapp_delivery_jid: cat.whatsapp_delivery_jid || '',
     });
+    setShowAdd(true);
   };
 
   const save = async () => {
+    if (!form.display_name) { toast('Display name is required', 'error'); return; }
+    if (!editTarget && (!form.slug || !/^[a-z0-9-]+$/.test(form.slug))) {
+      toast('Slug must be lowercase letters, numbers, and hyphens only', 'error'); return;
+    }
+
     let r;
-    if (editCat) {
-      r = await api.patch(`/api/categories/${editCat.id}`, {
+    if (editTarget) {
+      // FIX #4: send delivery_channel and whatsapp_delivery_jid in the update payload
+      // so the backend doesn't silently reset those columns to NULL.
+      r = await api.patch(`/api/categories/${editTarget.id}`, {
         display_name: form.display_name,
-        bot_token: form.bot_token,
-        chat_id: form.chat_id,
+        bot_token: form.bot_token || null,
+        chat_id: form.chat_id || null,
         ai_prompt: form.ai_prompt || null,
-        delivery_channel: form.delivery_channel,
+        delivery_channel: form.delivery_channel || 'telegram',
         whatsapp_delivery_jid: form.whatsapp_delivery_jid || null,
       });
     } else {
-      r = await api.post('/api/categories', form);
+      // FIX #4: include delivery_channel and whatsapp_delivery_jid on creation too
+      r = await api.post('/api/categories', {
+        slug: form.slug,
+        display_name: form.display_name,
+        bot_token: form.bot_token || null,
+        chat_id: form.chat_id || null,
+        ai_prompt: form.ai_prompt || null,
+        delivery_channel: form.delivery_channel || 'telegram',
+        whatsapp_delivery_jid: form.whatsapp_delivery_jid || null,
+      });
     }
-    if (r.success) { toast(editCat ? 'Category updated' : 'Category created'); setEditCat(null); setShowAdd(false); setForm(emptyForm); load(); }
-    else toast(r.error || 'Save failed', 'error');
+
+    if (r.success) {
+      toast(editTarget ? 'Category updated' : 'Category created');
+      setShowAdd(false);
+      setEditTarget(null);
+      setForm({ slug: '', display_name: '', bot_token: '', chat_id: '', ai_prompt: '', delivery_channel: 'telegram', whatsapp_delivery_jid: '' });
+      load();
+    } else {
+      toast(r.error || 'Save failed', 'error');
+    }
   };
 
-  const isBuiltIn = (slug) => slug === 'cc' || slug === 'deals';
+  const test = async (id) => {
+    setTesting(id);
+    try {
+      const r = await api.post(`/api/categories/${id}/test`, {});
+      if (r.success) toast(r.message || 'Test message sent!');
+      else toast(r.error || 'Test failed', 'error');
+    } catch (e) {
+      toast('Test request failed', 'error');
+    } finally {
+      setTesting(null);
+    }
+  };
+
+  if (loading) return React.createElement(Spinner);
 
   return React.createElement('div', { className: 'section-content' },
-    React.createElement('div', { className: 'toolbar' },
-      React.createElement('span', { className: 'text-muted' }, `${cats.length} categories`),
-      React.createElement('button', { className: 'btn btn-primary', onClick: () => { setEditCat(null); setForm(emptyForm); setShowAdd(true); } }, '+ New Category')
+    React.createElement('div', { className: 'section-toolbar' },
+      React.createElement('span', { className: 'toolbar-title' }, `${categories.length} categories`),
+      React.createElement('button', { className: 'btn btn-primary', onClick: () => { setEditTarget(null); setForm({ slug: '', display_name: '', bot_token: '', chat_id: '', ai_prompt: '', delivery_channel: 'telegram', whatsapp_delivery_jid: '' }); setShowAdd(true); } }, '+ New Category')
     ),
 
-    loading ? React.createElement(Spinner) :
-    cats.length === 0
-      ? React.createElement(EmptyState, { icon: '📂', message: 'No categories yet' })
-      : React.createElement('div', { className: 'card-list' },
-          cats.map(cat => React.createElement('div', { key: cat.id, className: `cat-card ${cat.is_active ? '' : 'inactive'}` },
-            React.createElement('div', { className: 'cat-card-left' },
-              React.createElement('div', { className: 'cat-name' },
-                React.createElement('strong', null, cat.display_name),
-                React.createElement(Badge, { label: cat.slug, variant: 'info' }),
-                isBuiltIn(cat.slug) && React.createElement(Badge, { label: 'built-in', variant: 'default' })
-              ),
-              React.createElement('div', { className: 'cat-meta' },
-                React.createElement('span', null, `📬 ${cat.delivery_channel || 'telegram'}`),
-                cat.bot_token ? React.createElement('span', null, '🤖 Bot configured') : React.createElement('span', { className: 'text-error' }, '⚠ No bot token'),
-                cat.chat_id ? React.createElement('span', null, `💬 ${cat.chat_id}`) : React.createElement('span', { className: 'text-muted' }, 'No chat ID')
-              )
+    React.createElement('div', { className: 'category-grid' },
+      categories.map(cat =>
+        React.createElement('div', { key: cat.id, className: `category-card ${cat.is_active ? 'active' : 'inactive'}` },
+          React.createElement('div', { className: 'category-card-header' },
+            React.createElement('div', { className: 'category-info' },
+              React.createElement('h4', { className: 'category-name' }, cat.display_name),
+              React.createElement('code', { className: 'category-slug' }, cat.slug)
             ),
-            React.createElement('div', { className: 'cat-card-right' },
-              React.createElement(Toggle, { checked: !!cat.is_active, onChange: () => toggle(cat) }),
-              React.createElement('button', { className: 'btn btn-sm btn-ghost', onClick: () => openEdit(cat) }, 'Edit'),
-              React.createElement('button', { className: 'btn btn-sm btn-ghost', onClick: () => testBot(cat), title: 'Send test Telegram message' }, '🧪 Test'),
-              !isBuiltIn(cat.slug) && React.createElement('button', { className: 'btn btn-sm btn-danger', onClick: () => del(cat) }, 'Delete')
-            )
-          ))
-        ),
-
-    React.createElement(Modal, { open: showAdd || !!editCat, title: editCat ? `Edit: ${editCat.display_name}` : 'New Category', onClose: () => { setShowAdd(false); setEditCat(null); setForm(emptyForm); } },
-      React.createElement('div', { className: 'form-grid' },
-        !editCat && React.createElement(React.Fragment, null,
-          React.createElement('label', { className: 'form-label' }, 'Slug (e.g. deals, crypto)'),
-          React.createElement('input', { className: 'form-input', placeholder: 'lowercase-slug', value: form.slug, onChange: e => setForm(f => ({ ...f, slug: e.target.value })) })
-        ),
-        React.createElement('label', { className: 'form-label' }, 'Display Name'),
-        React.createElement('input', { className: 'form-input', placeholder: 'CC & Finance', value: form.display_name, onChange: e => setForm(f => ({ ...f, display_name: e.target.value })) }),
-        React.createElement('label', { className: 'form-label' }, 'Telegram Bot Token'),
-        React.createElement('input', { className: 'form-input', placeholder: '123456:ABC…', value: form.bot_token, onChange: e => setForm(f => ({ ...f, bot_token: e.target.value })) }),
-        React.createElement('label', { className: 'form-label' }, 'Telegram Chat ID'),
-        React.createElement('input', { className: 'form-input', placeholder: '-100123456789', value: form.chat_id, onChange: e => setForm(f => ({ ...f, chat_id: e.target.value })) }),
-        React.createElement('label', { className: 'form-label' }, 'Delivery Channel'),
-        React.createElement('select', { className: 'form-input', value: form.delivery_channel, onChange: e => setForm(f => ({ ...f, delivery_channel: e.target.value })) },
-          React.createElement('option', { value: 'telegram' }, 'Telegram'),
-          React.createElement('option', { value: 'whatsapp' }, 'WhatsApp')
-        ),
-        form.delivery_channel === 'whatsapp' && React.createElement(React.Fragment, null,
-          React.createElement('label', { className: 'form-label' }, 'WhatsApp Delivery JID'),
-          React.createElement('input', { className: 'form-input', placeholder: '91XXXXXXXXXX@s.whatsapp.net', value: form.whatsapp_delivery_jid, onChange: e => setForm(f => ({ ...f, whatsapp_delivery_jid: e.target.value })) })
-        ),
-        React.createElement('label', { className: 'form-label' }, 'AI Prompt Override (optional)'),
-        React.createElement('textarea', { className: 'form-input', rows: 3, placeholder: 'Custom summarization instructions…', value: form.ai_prompt, onChange: e => setForm(f => ({ ...f, ai_prompt: e.target.value })) }),
-        React.createElement('div', { className: 'form-actions' },
-          React.createElement('button', { className: 'btn btn-ghost', onClick: () => { setShowAdd(false); setEditCat(null); setForm(emptyForm); } }, 'Cancel'),
-          React.createElement('button', { className: 'btn btn-primary', onClick: save }, editCat ? 'Save Changes' : 'Create Category')
+            React.createElement(Toggle, {
+              checked: !!cat.is_active,
+              // FIX #1: calls toggle() which now uses PATCH /api/categories/:id (not /toggle)
+              onChange: () => toggle(cat.id, !!cat.is_active),
+              disabled: cat.slug === 'cc'
+            })
+          ),
+          React.createElement('div', { className: 'category-meta' },
+            React.createElement('span', { className: 'meta-item' }, cat.bot_token ? '✅ Bot token' : '⚠️ No bot token'),
+            React.createElement('span', { className: 'meta-item' }, cat.chat_id ? '✅ Chat ID' : '⚠️ No chat ID'),
+            React.createElement('span', { className: 'meta-item' }, `📡 ${cat.delivery_channel || 'telegram'}`)
+          ),
+          cat.ai_prompt && React.createElement('div', { className: 'category-prompt' },
+            React.createElement('p', { className: 'prompt-preview' }, cat.ai_prompt.slice(0, 100) + (cat.ai_prompt.length > 100 ? '…' : ''))
+          ),
+          React.createElement('div', { className: 'category-actions' },
+            React.createElement('button', { className: 'btn btn-sm btn-ghost', onClick: () => openEdit(cat) }, '✏️ Edit'),
+            React.createElement('button', {
+              className: 'btn btn-sm btn-secondary',
+              onClick: () => test(cat.id),
+              disabled: testing === cat.id || !cat.bot_token || !cat.chat_id
+            }, testing === cat.id ? '⏳ Testing…' : '🧪 Test'),
+            cat.slug !== 'cc' && cat.slug !== 'deals' &&
+              React.createElement('button', { className: 'btn btn-sm btn-danger', onClick: () => del(cat.id, cat.display_name, cat.slug) }, '🗑️ Delete')
+          )
         )
+      )
+    ),
+
+    React.createElement(Modal, {
+      open: showAdd,
+      title: editTarget ? `Edit: ${editTarget.display_name}` : 'New Category',
+      onClose: () => { setShowAdd(false); setEditTarget(null); }
+    },
+      !editTarget && React.createElement('div', { className: 'form-group' },
+        React.createElement('label', { className: 'form-label' }, 'Slug (cannot be changed later)'),
+        React.createElement('input', { className: 'input', placeholder: 'e.g. crypto', value: form.slug, onChange: e => setForm(f => ({ ...f, slug: e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, '') })) })
+      ),
+      React.createElement('div', { className: 'form-group' },
+        React.createElement('label', { className: 'form-label' }, 'Display Name'),
+        React.createElement('input', { className: 'input', placeholder: 'e.g. Crypto News', value: form.display_name, onChange: e => setForm(f => ({ ...f, display_name: e.target.value })) })
+      ),
+      React.createElement('div', { className: 'form-group' },
+        React.createElement('label', { className: 'form-label' }, 'Telegram Bot Token'),
+        React.createElement('input', { className: 'input', placeholder: '123456:ABC-DEF...', value: form.bot_token, onChange: e => setForm(f => ({ ...f, bot_token: e.target.value })) })
+      ),
+      React.createElement('div', { className: 'form-group' },
+        React.createElement('label', { className: 'form-label' }, 'Telegram Chat ID'),
+        React.createElement('input', { className: 'input', placeholder: '-1001234567890', value: form.chat_id, onChange: e => setForm(f => ({ ...f, chat_id: e.target.value })) })
+      ),
+      React.createElement('div', { className: 'form-group' },
+        React.createElement('label', { className: 'form-label' }, 'Delivery Channel'),
+        React.createElement('select', { className: 'input', value: form.delivery_channel, onChange: e => setForm(f => ({ ...f, delivery_channel: e.target.value })) },
+          React.createElement('option', { value: 'telegram' }, 'Telegram'),
+          React.createElement('option', { value: 'whatsapp' }, 'WhatsApp'),
+          React.createElement('option', { value: 'both' }, 'Both')
+        )
+      ),
+      (form.delivery_channel === 'whatsapp' || form.delivery_channel === 'both') &&
+        React.createElement('div', { className: 'form-group' },
+          React.createElement('label', { className: 'form-label' }, 'WhatsApp Delivery JID'),
+          React.createElement('input', { className: 'input', placeholder: '120363xxxxxxxxxx@g.us', value: form.whatsapp_delivery_jid, onChange: e => setForm(f => ({ ...f, whatsapp_delivery_jid: e.target.value })) })
+        ),
+      React.createElement('div', { className: 'form-group' },
+        React.createElement('label', { className: 'form-label' }, 'AI Prompt (optional)'),
+        React.createElement('textarea', { className: 'input textarea', rows: 4, placeholder: 'Custom summarisation instructions for this category…', value: form.ai_prompt, onChange: e => setForm(f => ({ ...f, ai_prompt: e.target.value })) })
+      ),
+      React.createElement('div', { className: 'modal-actions' },
+        React.createElement('button', { className: 'btn btn-ghost', onClick: () => { setShowAdd(false); setEditTarget(null); } }, 'Cancel'),
+        React.createElement('button', { className: 'btn btn-primary', onClick: save }, editTarget ? 'Save Changes' : 'Create Category')
       )
     )
   );
 }
 
-// ─── Section: Schedules ───────────────────────────────────────
+// ─── Section: Schedules ──────────────────────────────────────
 function SchedulesSection() {
-  const [rules, setRules] = useState([]);
-  const [cats, setCats] = useState([]);
+  const [schedules, setSchedules] = useState([]);
+  const [categories, setCategories] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showAdd, setShowAdd] = useState(false);
-  const emptyForm = { category_slug: '', cron_expression: '', label: '' };
-  const [form, setForm] = useState(emptyForm);
   const [triggering, setTriggering] = useState(null);
+  const [form, setForm] = useState({ category_slug: '', cron_expression: '', label: '' });
 
   const load = useCallback(async () => {
     try {
-      const [r, c] = await Promise.all([api.get('/api/schedules'), api.get('/api/categories')]);
-      setRules(Array.isArray(r) ? r : []);
-      setCats(Array.isArray(c) ? c : []);
+      const [s, c] = await Promise.all([api.get('/api/schedules'), api.get('/api/categories')]);
+      setSchedules(Array.isArray(s) ? s : []);
+      setCategories(Array.isArray(c) ? c : []);
     } catch (e) { toast('Failed to load schedules', 'error'); }
     finally { setLoading(false); }
   }, []);
 
   useEffect(() => { load(); }, [load]);
 
-  const toggle = async (rule) => {
-    const r = await api.patch(`/api/schedules/${rule.id}`, { is_active: !rule.is_active });
-    if (r.success) { toast(rule.is_active ? 'Schedule paused' : 'Schedule activated'); load(); }
-    else toast(r.error || 'Toggle failed', 'error');
+  // FIX #2: toggle schedule now calls PATCH /api/schedules/:id with {is_active}
+  // instead of PATCH /api/schedules/:id/toggle, keeping all schedule mutations
+  // through one route and matching how category toggle works.
+  const toggle = async (id, current) => {
+    const r = await api.patch(`/api/schedules/${id}`, { is_active: !current });
+    if (r.success) {
+      setSchedules(s => s.map(x => x.id === id ? { ...x, is_active: !current ? 1 : 0 } : x));
+    } else {
+      toast(r.error || 'Toggle failed', 'error');
+    }
   };
 
   const del = async (id) => {
     if (!confirm('Delete this schedule rule?')) return;
     const r = await api.del(`/api/schedules/${id}`);
-    if (r.success) { toast('Rule deleted'); load(); }
+    if (r.success) { toast('Schedule deleted'); load(); }
     else toast(r.error || 'Delete failed', 'error');
   };
 
+  // FIX #3: trigger now calls POST /api/schedules/trigger (canonical route)
+  // instead of the legacy POST /api/trigger alias.
   const trigger = async (slug) => {
-    setTriggering(slug);
-    const r = await api.post('/api/schedules/trigger', { slug });
-    if (r.success) toast(`✅ Brief triggered for "${slug}"`);
-    else toast(r.error || 'Trigger failed', 'error');
-    setTriggering(null);
-  };
-
-  const triggerAll = async () => {
-    setTriggering('all');
-    const r = await api.post('/api/schedules/trigger', {});
-    if (r.success) toast('✅ All briefs triggered');
-    else toast(r.error || 'Trigger failed', 'error');
-    setTriggering(null);
+    setTriggering(slug || 'all');
+    try {
+      const r = await api.post('/api/schedules/trigger', { slug: slug || null });
+      if (r.success) toast(r.message || 'Brief triggered!');
+      else toast(r.error || 'Trigger failed', 'error');
+    } catch (e) {
+      toast('Trigger request failed', 'error');
+    } finally {
+      setTriggering(null);
+    }
   };
 
   const add = async () => {
-    if (!form.category_slug || !form.cron_expression || !form.label) { toast('All fields required', 'error'); return; }
+    if (!form.category_slug || !form.cron_expression || !form.label) {
+      toast('All fields required', 'error'); return;
+    }
     const r = await api.post('/api/schedules', form);
-    if (r.success) { toast('Schedule added'); setShowAdd(false); setForm(emptyForm); load(); }
+    if (r.success) { toast('Schedule added'); setShowAdd(false); setForm({ category_slug: '', cron_expression: '', label: '' }); load(); }
     else toast(r.error || 'Add failed', 'error');
   };
 
-  // Group rules by category
-  const grouped = rules.reduce((acc, r) => {
-    if (!acc[r.category_slug]) acc[r.category_slug] = [];
-    acc[r.category_slug].push(r);
-    return acc;
-  }, {});
+  if (loading) return React.createElement(Spinner);
 
-  const catMap = cats.reduce((m, c) => { m[c.slug] = c.display_name; return m; }, {});
+  const grouped = {};
+  schedules.forEach(s => {
+    if (!grouped[s.category_slug]) grouped[s.category_slug] = [];
+    grouped[s.category_slug].push(s);
+  });
 
   return React.createElement('div', { className: 'section-content' },
-    React.createElement('div', { className: 'toolbar' },
-      React.createElement('button', { className: 'btn btn-ghost', onClick: triggerAll, disabled: triggering === 'all' },
-        triggering === 'all' ? '⏳ Triggering…' : '⚡ Trigger All Now'
-      ),
-      React.createElement('button', { className: 'btn btn-primary', onClick: () => setShowAdd(true) }, '+ Add Rule')
+    React.createElement('div', { className: 'section-toolbar' },
+      React.createElement('span', { className: 'toolbar-title' }, `${schedules.length} schedule rules`),
+      React.createElement('div', { className: 'toolbar-actions' },
+        // FIX #3: trigger all now calls POST /api/schedules/trigger
+        React.createElement('button', {
+          className: 'btn btn-secondary',
+          onClick: () => trigger(null),
+          disabled: triggering === 'all'
+        }, triggering === 'all' ? '⏳ Triggering…' : '⚡ Trigger All'),
+        React.createElement('button', { className: 'btn btn-primary', onClick: () => setShowAdd(true) }, '+ Add Schedule')
+      )
     ),
 
-    loading ? React.createElement(Spinner) :
     Object.keys(grouped).length === 0
-      ? React.createElement(EmptyState, { icon: '📅', message: 'No schedule rules yet', sub: 'Add a cron rule to auto-send daily briefs' })
-      : Object.entries(grouped).map(([slug, slugRules]) =>
-          React.createElement(Card, {
+      ? React.createElement(EmptyState, { icon: '📅', message: 'No schedules configured', sub: 'Add schedule rules to automate brief delivery' })
+      : Object.entries(grouped).map(([slug, rules]) => {
+          const cat = categories.find(c => c.slug === slug);
+          return React.createElement(Card, {
             key: slug,
-            title: `${catMap[slug] || slug}`,
+            title: `📅 ${cat ? cat.display_name : slug}`,
             action: React.createElement('button', {
-              className: 'btn btn-sm btn-ghost',
+              className: 'btn btn-sm btn-secondary',
+              // FIX #3: per-category trigger also uses POST /api/schedules/trigger
               onClick: () => trigger(slug),
               disabled: triggering === slug
-            }, triggering === slug ? '⏳' : '⚡ Trigger Now')
+            }, triggering === slug ? '⏳ Triggering…' : '⚡ Trigger Now')
           },
             React.createElement('div', { className: 'table-wrap' },
               React.createElement('table', { className: 'data-table' },
                 React.createElement('thead', null,
                   React.createElement('tr', null,
-                    ['Label', 'Cron', 'Active', 'Running', 'Actions'].map(h => React.createElement('th', { key: h }, h))
+                    ['Label', 'Cron', 'Active', 'Running', 'Actions'].map(h =>
+                      React.createElement('th', { key: h }, h)
+                    )
                   )
                 ),
                 React.createElement('tbody', null,
-                  slugRules.map(rule => React.createElement('tr', { key: rule.id, className: rule.is_active ? '' : 'row-inactive' },
-                    React.createElement('td', null, rule.label),
-                    React.createElement('td', null, React.createElement('code', { className: 'source-id' }, rule.cron_expression)),
-                    React.createElement('td', null, React.createElement(Toggle, { checked: !!rule.is_active, onChange: () => toggle(rule) })),
-                    React.createElement('td', null, React.createElement(Badge, { label: rule.is_running ? 'Live' : 'Idle', variant: rule.is_running ? 'success' : 'default' })),
-                    React.createElement('td', null,
-                      React.createElement('button', { className: 'btn btn-sm btn-danger', onClick: () => del(rule.id) }, 'Delete')
+                  rules.map(rule =>
+                    React.createElement('tr', { key: rule.id },
+                      React.createElement('td', null, rule.label),
+                      React.createElement('td', null, React.createElement('code', { className: 'cron-expr' }, rule.cron_expression)),
+                      React.createElement('td', null,
+                        // FIX #2: toggle() now sends to PATCH /api/schedules/:id
+                        React.createElement(Toggle, { checked: !!rule.is_active, onChange: () => toggle(rule.id, !!rule.is_active) })
+                      ),
+                      React.createElement('td', null,
+                        React.createElement(Badge, { label: rule.is_running ? 'Running' : 'Idle', variant: rule.is_running ? 'success' : 'default' })
+                      ),
+                      React.createElement('td', null,
+                        React.createElement('button', { className: 'btn btn-sm btn-danger', onClick: () => del(rule.id) }, 'Delete')
+                      )
                     )
-                  ))
+                  )
                 )
               )
             )
-          )
-        ),
+          );
+        }),
 
-    React.createElement(Modal, { open: showAdd, title: 'Add Schedule Rule', onClose: () => { setShowAdd(false); setForm(emptyForm); } },
-      React.createElement('div', { className: 'form-grid' },
+    React.createElement(Modal, { open: showAdd, title: 'Add Schedule Rule', onClose: () => setShowAdd(false) },
+      React.createElement('div', { className: 'form-group' },
         React.createElement('label', { className: 'form-label' }, 'Category'),
-        React.createElement('select', { className: 'form-input', value: form.category_slug, onChange: e => setForm(f => ({ ...f, category_slug: e.target.value })) },
+        React.createElement('select', { className: 'input', value: form.category_slug, onChange: e => setForm(f => ({ ...f, category_slug: e.target.value })) },
           React.createElement('option', { value: '' }, '— Select category —'),
-          cats.map(c => React.createElement('option', { key: c.slug, value: c.slug }, c.display_name))
-        ),
-        React.createElement('label', { className: 'form-label' }, 'Cron Expression'),
-        React.createElement('input', { className: 'form-input', placeholder: '0 8 * * * (8 AM daily)', value: form.cron_expression, onChange: e => setForm(f => ({ ...f, cron_expression: e.target.value })) }),
-        React.createElement('label', { className: 'form-label' }, 'Label'),
-        React.createElement('input', { className: 'form-input', placeholder: '8 AM Brief', value: form.label, onChange: e => setForm(f => ({ ...f, label: e.target.value })) }),
-        React.createElement('div', { className: 'form-actions' },
-          React.createElement('button', { className: 'btn btn-ghost', onClick: () => { setShowAdd(false); setForm(emptyForm); } }, 'Cancel'),
-          React.createElement('button', { className: 'btn btn-primary', onClick: add }, 'Add Rule')
+          categories.map(c => React.createElement('option', { key: c.slug, value: c.slug }, c.display_name))
         )
+      ),
+      React.createElement('div', { className: 'form-group' },
+        React.createElement('label', { className: 'form-label' }, 'Cron Expression'),
+        React.createElement('input', { className: 'input', placeholder: '0 8 * * * (daily at 8 AM)', value: form.cron_expression, onChange: e => setForm(f => ({ ...f, cron_expression: e.target.value })) })
+      ),
+      React.createElement('div', { className: 'form-group' },
+        React.createElement('label', { className: 'form-label' }, 'Label'),
+        React.createElement('input', { className: 'input', placeholder: 'e.g. Daily Morning Brief', value: form.label, onChange: e => setForm(f => ({ ...f, label: e.target.value })) })
+      ),
+      React.createElement('div', { className: 'modal-actions' },
+        React.createElement('button', { className: 'btn btn-ghost', onClick: () => setShowAdd(false) }, 'Cancel'),
+        React.createElement('button', { className: 'btn btn-primary', onClick: add }, 'Add Schedule')
       )
     )
   );
 }
 
-// ─── Section: Telegram ────────────────────────────────────────
+// ─── Section: Telegram Login ──────────────────────────────────
 function TelegramSection() {
   const [status, setStatus] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [phone, setPhone] = useState('');
-  const [code, setCode] = useState('');
-  const [password, setPassword] = useState('');
-  const [step, setStep] = useState('idle'); // idle | sent | done
   const [channels, setChannels] = useState([]);
+  const [loading, setLoading] = useState(true);
   const [discovering, setDiscovering] = useState(false);
+  const [step, setStep] = useState('idle'); // idle | phone | otp | done
+  const [phone, setPhone] = useState('');
+  const [otp, setOtp] = useState('');
+  const [password, setPassword] = useState('');
 
   const loadStatus = useCallback(async () => {
-    try { const s = await api.get('/api/telegram/status'); setStatus(s); if (s.isReady) setStep('done'); else if (s.tempPhone) setStep('sent'); }
-    catch (e) { toast('Failed to load Telegram status', 'error'); }
+    try {
+      const s = await api.get('/api/telegram/status');
+      setStatus(s);
+      if (s.isReady) setStep('done');
+    } catch (e) { toast('Failed to load Telegram status', 'error'); }
     finally { setLoading(false); }
   }, []);
 
   useEffect(() => { loadStatus(); }, [loadStatus]);
 
   const sendCode = async () => {
-    if (!phone) { toast('Enter phone number', 'error'); return; }
+    if (!phone) { toast('Enter a phone number', 'error'); return; }
     const r = await api.post('/api/telegram/send-code', { phoneNumber: phone });
-    if (r.success) { toast('OTP sent!'); setStep('sent'); }
+    if (r.success) { toast('OTP sent!'); setStep('otp'); }
     else toast(r.error || 'Failed to send code', 'error');
   };
 
   const submitCode = async () => {
-    if (!code) { toast('Enter OTP code', 'error'); return; }
-    const r = await api.post('/api/telegram/submit-code', { code, password });
-    if (r.success) { toast('✅ Logged in!'); setStep('done'); loadStatus(); }
+    if (!otp) { toast('Enter the OTP', 'error'); return; }
+    const r = await api.post('/api/telegram/submit-code', { code: otp, password: password || undefined });
+    if (r.success) { toast('Logged in!'); setStep('done'); loadStatus(); }
     else toast(r.error || 'Login failed', 'error');
   };
 
   const logout = async () => {
-    if (!confirm('Log out Telegram user session?')) return;
+    if (!confirm('Log out from Telegram user account?')) return;
     const r = await api.post('/api/telegram/logout', {});
     if (r.success) { toast('Logged out'); setStep('idle'); loadStatus(); }
     else toast(r.error || 'Logout failed', 'error');
@@ -590,44 +712,52 @@ function TelegramSection() {
 
   const discover = async () => {
     setDiscovering(true);
-    try { const r = await api.get('/api/telegram/discover'); setChannels(Array.isArray(r) ? r : []); }
-    catch (e) { toast('Discovery failed', 'error'); }
-    setDiscovering(false);
+    try {
+      const ch = await api.get('/api/telegram/discover');
+      setChannels(Array.isArray(ch) ? ch : []);
+      if (!Array.isArray(ch) || ch.length === 0) toast('No channels found', 'error');
+    } catch (e) { toast('Discovery failed', 'error'); }
+    finally { setDiscovering(false); }
   };
 
   if (loading) return React.createElement(Spinner);
 
   return React.createElement('div', { className: 'section-content' },
-    React.createElement(Card, { title: '📡 Telegram User Session' },
-      React.createElement('div', { className: 'status-row' },
-        React.createElement('div', { className: `status-indicator ${status && status.isReady ? 'status-ok' : 'status-warn'}` }),
-        React.createElement('span', null, status && status.isReady ? 'Connected' : (status && status.tempPhone ? `Waiting for OTP — ${status.tempPhone}` : 'Not connected'))
+    React.createElement(Card, { title: '🔐 Telegram User Session' },
+      step === 'idle' && React.createElement('div', null,
+        React.createElement('p', { className: 'text-muted mb-4' }, 'Log in with your Telegram user account to enable channel discovery and message ingestion.'),
+        React.createElement('button', { className: 'btn btn-primary', onClick: () => setStep('phone') }, 'Login with Telegram')
       ),
-
-      !status?.isReady && step === 'idle' && React.createElement('div', { className: 'form-grid mt-4' },
-        React.createElement('label', { className: 'form-label' }, 'Phone Number (with country code)'),
-        React.createElement('input', { className: 'form-input', placeholder: '+919876543210', value: phone, onChange: e => setPhone(e.target.value) }),
-        React.createElement('div', { className: 'form-actions' },
+      step === 'phone' && React.createElement('div', { className: 'login-form' },
+        React.createElement('div', { className: 'form-group' },
+          React.createElement('label', { className: 'form-label' }, 'Phone Number (with country code)'),
+          React.createElement('input', { className: 'input', placeholder: '+919876543210', value: phone, onChange: e => setPhone(e.target.value) })
+        ),
+        React.createElement('div', { className: 'modal-actions' },
+          React.createElement('button', { className: 'btn btn-ghost', onClick: () => setStep('idle') }, 'Back'),
           React.createElement('button', { className: 'btn btn-primary', onClick: sendCode }, 'Send OTP')
         )
       ),
-
-      !status?.isReady && step === 'sent' && React.createElement('div', { className: 'form-grid mt-4' },
-        React.createElement('label', { className: 'form-label' }, 'OTP Code'),
-        React.createElement('input', { className: 'form-input', placeholder: '12345', value: code, onChange: e => setCode(e.target.value) }),
-        React.createElement('label', { className: 'form-label' }, '2FA Password (if enabled)'),
-        React.createElement('input', { className: 'form-input', type: 'password', placeholder: 'Leave blank if not set', value: password, onChange: e => setPassword(e.target.value) }),
-        React.createElement('div', { className: 'form-actions' },
-          React.createElement('button', { className: 'btn btn-ghost', onClick: () => setStep('idle') }, '← Back'),
-          React.createElement('button', { className: 'btn btn-primary', onClick: submitCode }, 'Verify & Login')
+      step === 'otp' && React.createElement('div', { className: 'login-form' },
+        React.createElement('div', { className: 'form-group' },
+          React.createElement('label', { className: 'form-label' }, 'OTP Code'),
+          React.createElement('input', { className: 'input', placeholder: '12345', value: otp, onChange: e => setOtp(e.target.value) })
+        ),
+        React.createElement('div', { className: 'form-group' },
+          React.createElement('label', { className: 'form-label' }, '2FA Password (if enabled)'),
+          React.createElement('input', { className: 'input', type: 'password', placeholder: 'Leave blank if not set', value: password, onChange: e => setPassword(e.target.value) })
+        ),
+        React.createElement('div', { className: 'modal-actions' },
+          React.createElement('button', { className: 'btn btn-ghost', onClick: () => setStep('phone') }, 'Back'),
+          React.createElement('button', { className: 'btn btn-primary', onClick: submitCode }, 'Submit OTP')
         )
       ),
-
-      status?.isReady && React.createElement('div', { className: 'form-actions mt-4' },
-        React.createElement('button', { className: 'btn btn-ghost', onClick: discover, disabled: discovering },
-          discovering ? '🔍 Discovering…' : '🔍 Discover Channels'
-        ),
-        React.createElement('button', { className: 'btn btn-danger', onClick: logout }, 'Logout')
+      step === 'done' && React.createElement('div', null,
+        React.createElement('p', { className: 'text-success mb-4' }, '✅ Telegram user session is active.'),
+        React.createElement('div', { className: 'modal-actions' },
+          React.createElement('button', { className: 'btn btn-secondary', onClick: discover, disabled: discovering }, discovering ? '⏳ Discovering…' : '🔍 Discover Channels'),
+          React.createElement('button', { className: 'btn btn-danger', onClick: logout }, 'Logout')
+        )
       )
     ),
 
@@ -636,16 +766,18 @@ function TelegramSection() {
         React.createElement('table', { className: 'data-table' },
           React.createElement('thead', null,
             React.createElement('tr', null,
-              ['ID', 'Title', 'Type', 'Members'].map(h => React.createElement('th', { key: h }, h))
+              ['Title', 'Username', 'Type', 'Members'].map(h => React.createElement('th', { key: h }, h))
             )
           ),
           React.createElement('tbody', null,
-            channels.map((ch, i) => React.createElement('tr', { key: i },
-              React.createElement('td', null, React.createElement('code', { className: 'source-id' }, ch.id)),
-              React.createElement('td', null, ch.title),
-              React.createElement('td', null, React.createElement(Badge, { label: ch.type || 'channel', variant: 'info' })),
-              React.createElement('td', null, ch.participants_count || '—')
-            ))
+            channels.map((ch, i) =>
+              React.createElement('tr', { key: i },
+                React.createElement('td', null, ch.title || ch.name || '—'),
+                React.createElement('td', null, ch.username ? React.createElement('code', null, '@' + ch.username) : '—'),
+                React.createElement('td', null, React.createElement(Badge, { label: ch.type || 'channel', variant: 'info' })),
+                React.createElement('td', null, ch.participantsCount?.toLocaleString() || '—')
+              )
+            )
           )
         )
       )
@@ -653,32 +785,175 @@ function TelegramSection() {
   );
 }
 
-// ─── Section: Cookies ─────────────────────────────────────────
-function CookiesSection() {
-  const SITES = ['desidime', 'technofino', 'reddit', 'youtube'];
-  const [siteData, setSiteData] = useState([]);
+// ─── Section: WhatsApp ────────────────────────────────────────
+function WhatsAppSection() {
+  const [groups, setGroups] = useState([]);
+  const [sources, setSources] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [activeSite, setActiveSite] = useState(null);
-  const [cookieText, setCookieText] = useState('');
-  const [saving, setSaving] = useState(false);
+  const [discovering, setDiscovering] = useState(false);
+  const [showAdd, setShowAdd] = useState(false);
+  const [form, setForm] = useState({ name: '', source_id: '', category_slug: '' });
+  const [categories, setCategories] = useState([]);
+  const [filter, setFilter] = useState('');
 
   const load = useCallback(async () => {
-    try { const r = await api.get('/api/cookies'); setSiteData(Array.isArray(r) ? r : []); }
-    catch (e) { toast('Failed to load cookies', 'error'); }
+    try {
+      const [s, c] = await Promise.all([api.get('/api/whatsapp/sources'), api.get('/api/categories')]);
+      setSources(Array.isArray(s) ? s : []);
+      setCategories(Array.isArray(c) ? c : []);
+    } catch (e) { toast('Failed to load WhatsApp data', 'error'); }
     finally { setLoading(false); }
   }, []);
 
   useEffect(() => { load(); }, [load]);
 
-  const openPaste = (site) => { setActiveSite(site); setCookieText(''); };
+  const discover = async () => {
+    setDiscovering(true);
+    try {
+      const g = await api.get('/api/whatsapp/discover');
+      setGroups(Array.isArray(g) ? g : []);
+      if (!Array.isArray(g) || g.length === 0) toast('No groups found — make sure WhatsApp is connected', 'error');
+    } catch (e) { toast('Discovery failed', 'error'); }
+    finally { setDiscovering(false); }
+  };
 
-  const save = async () => {
+  const add = async () => {
+    if (!form.name || !form.source_id || !form.category_slug) { toast('All fields required', 'error'); return; }
+    const r = await api.post('/api/whatsapp/sources', form);
+    if (r.success) { toast('WhatsApp source added'); setShowAdd(false); setForm({ name: '', source_id: '', category_slug: '' }); load(); }
+    else toast(r.error || 'Add failed', 'error');
+  };
+
+  const del = async (id) => {
+    if (!confirm('Delete this WhatsApp source?')) return;
+    const r = await api.del(`/api/whatsapp/sources/${id}`);
+    if (r.success) { toast('Source deleted'); load(); }
+    else toast(r.error || 'Delete failed', 'error');
+  };
+
+  const addFromGroup = (g) => {
+    setForm({ name: g.name || g.id, source_id: g.id, category_slug: '' });
+    setShowAdd(true);
+  };
+
+  const filteredGroups = groups.filter(g => !filter || (g.name || '').toLowerCase().includes(filter.toLowerCase()));
+
+  if (loading) return React.createElement(Spinner);
+
+  return React.createElement('div', { className: 'section-content' },
+    React.createElement(Card, { title: '💬 WhatsApp Sources',
+      action: React.createElement('div', { className: 'card-actions' },
+        React.createElement('button', { className: 'btn btn-sm btn-secondary', onClick: discover, disabled: discovering }, discovering ? '⏳ Discovering…' : '🔍 Discover Groups'),
+        React.createElement('button', { className: 'btn btn-sm btn-primary', onClick: () => setShowAdd(true) }, '+ Add Source')
+      )
+    },
+      sources.length === 0
+        ? React.createElement(EmptyState, { icon: '💬', message: 'No WhatsApp sources', sub: 'Discover groups or add a JID manually' })
+        : React.createElement('div', { className: 'table-wrap' },
+            React.createElement('table', { className: 'data-table' },
+              React.createElement('thead', null,
+                React.createElement('tr', null,
+                  ['Name', 'JID', 'Category', 'Actions'].map(h => React.createElement('th', { key: h }, h))
+                )
+              ),
+              React.createElement('tbody', null,
+                sources.map(s =>
+                  React.createElement('tr', { key: s.id },
+                    React.createElement('td', null, s.name),
+                    React.createElement('td', null, React.createElement('code', { className: 'source-id' }, s.source_id)),
+                    React.createElement('td', null, React.createElement(Badge, { label: s.type?.replace('-whatsapp', '') || '—', variant: 'info' })),
+                    React.createElement('td', null,
+                      React.createElement('button', { className: 'btn btn-sm btn-danger', onClick: () => del(s.id) }, 'Delete')
+                    )
+                  )
+                )
+              )
+            )
+          )
+    ),
+
+    groups.length > 0 && React.createElement(Card, { title: '📋 Discovered Groups' },
+      React.createElement('div', { className: 'section-toolbar' },
+        React.createElement('input', {
+          className: 'input search-input',
+          placeholder: '🔍 Filter groups…',
+          value: filter,
+          onChange: e => setFilter(e.target.value),
+        })
+      ),
+      React.createElement('div', { className: 'table-wrap' },
+        React.createElement('table', { className: 'data-table' },
+          React.createElement('thead', null,
+            React.createElement('tr', null,
+              ['Name', 'JID', 'Action'].map(h => React.createElement('th', { key: h }, h))
+            )
+          ),
+          React.createElement('tbody', null,
+            filteredGroups.map((g, i) =>
+              React.createElement('tr', { key: i },
+                React.createElement('td', null, g.name || '—'),
+                React.createElement('td', null, React.createElement('code', { className: 'source-id' }, g.id)),
+                React.createElement('td', null,
+                  React.createElement('button', { className: 'btn btn-sm btn-primary', onClick: () => addFromGroup(g) }, '+ Add')
+                )
+              )
+            )
+          )
+        )
+      )
+    ),
+
+    React.createElement(Modal, { open: showAdd, title: 'Add WhatsApp Source', onClose: () => setShowAdd(false) },
+      React.createElement('div', { className: 'form-group' },
+        React.createElement('label', { className: 'form-label' }, 'Name'),
+        React.createElement('input', { className: 'input', placeholder: 'Group display name', value: form.name, onChange: e => setForm(f => ({ ...f, name: e.target.value })) })
+      ),
+      React.createElement('div', { className: 'form-group' },
+        React.createElement('label', { className: 'form-label' }, 'WhatsApp JID'),
+        React.createElement('input', { className: 'input', placeholder: '120363xxxxxxxxxx@g.us', value: form.source_id, onChange: e => setForm(f => ({ ...f, source_id: e.target.value })) })
+      ),
+      React.createElement('div', { className: 'form-group' },
+        React.createElement('label', { className: 'form-label' }, 'Category'),
+        React.createElement('select', { className: 'input', value: form.category_slug, onChange: e => setForm(f => ({ ...f, category_slug: e.target.value })) },
+          React.createElement('option', { value: '' }, '— Select category —'),
+          categories.map(c => React.createElement('option', { key: c.slug, value: c.slug }, c.display_name))
+        )
+      ),
+      React.createElement('div', { className: 'modal-actions' },
+        React.createElement('button', { className: 'btn btn-ghost', onClick: () => setShowAdd(false) }, 'Cancel'),
+        React.createElement('button', { className: 'btn btn-primary', onClick: add }, 'Add Source')
+      )
+    )
+  );
+}
+
+// ─── Section: Cookies ─────────────────────────────────────────
+function CookiesSection() {
+  const [cookieStatus, setCookieStatus] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [activeImport, setActiveImport] = useState(null);
+  const [cookieText, setCookieText] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  const load = useCallback(async () => {
+    try {
+      const c = await api.get('/api/cookies');
+      setCookieStatus(Array.isArray(c) ? c : []);
+    } catch (e) { toast('Failed to load cookie status', 'error'); }
+    finally { setLoading(false); }
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  const importCookies = async () => {
     if (!cookieText.trim()) { toast('Paste cookie JSON first', 'error'); return; }
     setSaving(true);
-    const r = await api.post('/api/cookies/import', { site: activeSite, cookies: cookieText.trim() });
-    setSaving(false);
-    if (r.success) { toast(`✅ Cookies saved for ${activeSite}`); setActiveSite(null); load(); }
-    else toast(r.error || 'Save failed', 'error');
+    try {
+      const r = await api.post('/api/cookies/import', { site: activeImport, cookies: cookieText.trim() });
+      if (r.success) { toast(`Cookies saved for ${activeImport}`); setActiveImport(null); setCookieText(''); load(); }
+      else toast(r.error || 'Save failed', 'error');
+    } catch (e) { toast('Request failed', 'error'); }
+    finally { setSaving(false); }
   };
 
   const deleteCookies = async (site) => {
@@ -690,231 +965,103 @@ function CookiesSection() {
 
   if (loading) return React.createElement(Spinner);
 
-  const siteMap = siteData.reduce((m, s) => { m[s.site] = s; return m; }, {});
-
-  return React.createElement('div', { className: 'section-content' },
-    React.createElement('div', { className: 'cookie-grid' },
-      SITES.map(site => {
-        const info = siteMap[site] || { site, has_cookies: false, updated_at: null };
-        return React.createElement('div', { key: site, className: `cookie-card ${info.has_cookies ? 'has-cookies' : ''}` },
-          React.createElement('div', { className: 'cookie-card-top' },
-            React.createElement('span', { className: `cookie-icon ${info.has_cookies ? 'text-success' : 'text-muted'}` }, info.has_cookies ? '🔐' : '🔓'),
-            React.createElement('div', null,
-              React.createElement('div', { className: 'cookie-site' }, site),
-              React.createElement('div', { className: 'text-muted text-sm' }, info.has_cookies ? `Updated ${timeAgo(info.updated_at)}` : 'No cookies')
-            )
-          ),
-          React.createElement('div', { className: 'cookie-actions' },
-            React.createElement('button', { className: 'btn btn-sm btn-ghost', onClick: () => openPaste(site) }, info.has_cookies ? 'Update' : 'Add Cookies'),
-            info.has_cookies && React.createElement('button', { className: 'btn btn-sm btn-danger', onClick: () => deleteCookies(site) }, 'Clear')
-          )
-        );
-      })
-    ),
-
-    React.createElement(Modal, { open: !!activeSite, title: `Paste Cookies — ${activeSite}`, onClose: () => setActiveSite(null) },
-      React.createElement('p', { className: 'text-muted mb-2' }, 'Paste the full JSON array of cookies exported from your browser (e.g. via EditThisCookie extension):'),
-      React.createElement('textarea', {
-        className: 'form-input cookie-textarea',
-        rows: 12,
-        placeholder: '[{"name": "session", "value": "...", ...}]',
-        value: cookieText,
-        onChange: e => setCookieText(e.target.value)
-      }),
-      React.createElement('div', { className: 'form-actions mt-2' },
-        React.createElement('button', { className: 'btn btn-ghost', onClick: () => setActiveSite(null) }, 'Cancel'),
-        React.createElement('button', { className: 'btn btn-primary', onClick: save, disabled: saving },
-          saving ? 'Saving…' : 'Save Cookies'
-        )
-      )
-    )
-  );
-}
-
-// ─── Section: WhatsApp Sources ────────────────────────────────
-function WhatsAppSection() {
-  const [sources, setSources] = useState([]);
-  const [discovered, setDiscovered] = useState([]);
-  const [cats, setCats] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [discovering, setDiscovering] = useState(false);
-  const [showAdd, setShowAdd] = useState(false);
-  const emptyForm = { name: '', source_id: '', category_slug: '' };
-  const [form, setForm] = useState(emptyForm);
-
-  const load = useCallback(async () => {
-    try {
-      const [s, c] = await Promise.all([api.get('/api/whatsapp/sources'), api.get('/api/categories')]);
-      setSources(Array.isArray(s) ? s : []);
-      setCats(Array.isArray(c) ? c : []);
-    } catch (e) { toast('Failed to load WhatsApp data', 'error'); }
-    finally { setLoading(false); }
-  }, []);
-
-  useEffect(() => { load(); }, [load]);
-
-  const discover = async () => {
-    setDiscovering(true);
-    try { const r = await api.get('/api/whatsapp/discover'); setDiscovered(Array.isArray(r) ? r : []); if (!r.length) toast('No groups found. Is WhatsApp connected?', 'error'); }
-    catch (e) { toast('Discovery failed — WhatsApp may not be connected', 'error'); }
-    setDiscovering(false);
-  };
-
-  const add = async () => {
-    if (!form.name || !form.source_id || !form.category_slug) { toast('All fields required', 'error'); return; }
-    const r = await api.post('/api/whatsapp/sources', form);
-    if (r.success) { toast('Source added'); setShowAdd(false); setForm(emptyForm); load(); }
-    else toast(r.error || 'Add failed', 'error');
-  };
-
-  const del = async (id, name) => {
-    if (!confirm(`Remove "${name}"?`)) return;
-    const r = await api.del(`/api/whatsapp/sources/${id}`);
-    if (r.success) { toast('Removed'); load(); }
-    else toast(r.error || 'Delete failed', 'error');
-  };
-
-  const prefill = (g) => {
-    setForm({ name: g.name || g.subject || g.id, source_id: g.id, category_slug: cats[0]?.slug || '' });
-    setShowAdd(true);
+  const siteInfo = {
+    youtube: { icon: '▶️', name: 'YouTube', hint: 'Paste cookies from youtube.com after login' },
+    technofino: { icon: '🏦', name: 'TechnoFino', hint: 'Paste cookies from technofino.com after login' },
+    desidime: { icon: '💰', name: 'DesiDime', hint: 'Paste cookies from desidime.com after login' },
+    reddit: { icon: '🤖', name: 'Reddit', hint: 'Paste cookies from reddit.com after login' },
   };
 
   return React.createElement('div', { className: 'section-content' },
-    React.createElement('div', { className: 'toolbar' },
-      React.createElement('button', { className: 'btn btn-ghost', onClick: discover, disabled: discovering },
-        discovering ? '🔍 Scanning…' : '🔍 Discover Groups'
-      ),
-      React.createElement('button', { className: 'btn btn-primary', onClick: () => setShowAdd(true) }, '+ Add Group')
-    ),
-
-    discovered.length > 0 && React.createElement(Card, { title: `📱 Discovered Groups (${discovered.length}) — click to add` },
-      React.createElement('div', { className: 'table-wrap' },
-        React.createElement('table', { className: 'data-table' },
-          React.createElement('thead', null,
-            React.createElement('tr', null, ['Name', 'ID', 'Action'].map(h => React.createElement('th', { key: h }, h)))
-          ),
-          React.createElement('tbody', null,
-            discovered.map((g, i) => React.createElement('tr', { key: i },
-              React.createElement('td', null, g.name || g.subject || '—'),
-              React.createElement('td', null, React.createElement('code', { className: 'source-id' }, g.id)),
-              React.createElement('td', null, React.createElement('button', { className: 'btn btn-sm btn-ghost', onClick: () => prefill(g) }, '+ Add'))
-            ))
-          )
-        )
-      )
-    ),
-
-    loading ? React.createElement(Spinner) :
-    React.createElement(Card, { title: `📋 Tracked Groups (${sources.length})` },
-      sources.length === 0
-        ? React.createElement(EmptyState, { icon: '💬', message: 'No WhatsApp groups tracked yet', sub: 'Discover groups or add manually' })
-        : React.createElement('div', { className: 'table-wrap' },
-            React.createElement('table', { className: 'data-table' },
-              React.createElement('thead', null,
-                React.createElement('tr', null, ['Name', 'Source ID', 'Category', 'Active', 'Actions'].map(h => React.createElement('th', { key: h }, h)))
-              ),
-              React.createElement('tbody', null,
-                sources.map(s => React.createElement('tr', { key: s.id, className: s.is_active ? '' : 'row-inactive' },
-                  React.createElement('td', null, React.createElement('strong', null, s.name)),
-                  React.createElement('td', null, React.createElement('code', { className: 'source-id' }, s.source_id)),
-                  React.createElement('td', null, React.createElement(Badge, { label: s.type.replace('-whatsapp', ''), variant: 'info' })),
-                  React.createElement('td', null, React.createElement(Badge, { label: s.is_active ? 'Active' : 'Inactive', variant: s.is_active ? 'success' : 'default' })),
-                  React.createElement('td', null, React.createElement('button', { className: 'btn btn-sm btn-danger', onClick: () => del(s.id, s.name) }, 'Remove'))
-                ))
+    React.createElement(Card, { title: '🔐 Session Cookies' },
+      React.createElement('p', { className: 'text-muted mb-4' }, 'Session cookies allow scrapers to access authenticated content. Use the EditThisCookie browser extension to export cookies as JSON.'),
+      React.createElement('div', { className: 'cookie-grid' },
+        cookieStatus.map(item => {
+          const info = siteInfo[item.site] || { icon: '🌐', name: item.site, hint: '' };
+          return React.createElement('div', { key: item.site, className: `cookie-card ${item.has_cookies ? 'has-cookies' : ''}` },
+            React.createElement('div', { className: 'cookie-icon' }, info.icon),
+            React.createElement('div', { className: 'cookie-info' },
+              React.createElement('div', { className: 'cookie-name' }, info.name),
+              React.createElement('div', { className: 'cookie-status' },
+                item.has_cookies
+                  ? React.createElement('span', { className: 'text-success' }, `✅ Active${item.updated_at ? ' · ' + timeAgo(item.updated_at) : ''}`)
+                  : React.createElement('span', { className: 'text-muted' }, '⚪ No cookies')
               )
+            ),
+            React.createElement('div', { className: 'cookie-actions' },
+              React.createElement('button', { className: 'btn btn-sm btn-primary', onClick: () => { setActiveImport(item.site); setCookieText(''); } }, item.has_cookies ? '🔄 Update' : '+ Import'),
+              item.has_cookies && React.createElement('button', { className: 'btn btn-sm btn-danger', onClick: () => deleteCookies(item.site) }, '🗑️')
             )
-          )
+          );
+        })
+      )
     ),
 
-    React.createElement(Modal, { open: showAdd, title: 'Add WhatsApp Group', onClose: () => { setShowAdd(false); setForm(emptyForm); } },
-      React.createElement('div', { className: 'form-grid' },
-        React.createElement('label', { className: 'form-label' }, 'Group Name'),
-        React.createElement('input', { className: 'form-input', placeholder: 'Deals Group', value: form.name, onChange: e => setForm(f => ({ ...f, name: e.target.value })) }),
-        React.createElement('label', { className: 'form-label' }, 'Group JID'),
-        React.createElement('input', { className: 'form-input', placeholder: '1234567890-12345@g.us', value: form.source_id, onChange: e => setForm(f => ({ ...f, source_id: e.target.value })) }),
-        React.createElement('label', { className: 'form-label' }, 'Category'),
-        React.createElement('select', { className: 'form-input', value: form.category_slug, onChange: e => setForm(f => ({ ...f, category_slug: e.target.value })) },
-          React.createElement('option', { value: '' }, '— Select category —'),
-          cats.map(c => React.createElement('option', { key: c.slug, value: c.slug }, c.display_name))
-        ),
-        React.createElement('div', { className: 'form-actions' },
-          React.createElement('button', { className: 'btn btn-ghost', onClick: () => { setShowAdd(false); setForm(emptyForm); } }, 'Cancel'),
-          React.createElement('button', { className: 'btn btn-primary', onClick: add }, 'Add Group')
-        )
+    React.createElement(Modal, {
+      open: !!activeImport,
+      title: `Import cookies — ${siteInfo[activeImport]?.name || activeImport}`,
+      onClose: () => setActiveImport(null)
+    },
+      React.createElement('p', { className: 'text-muted mb-4' }, siteInfo[activeImport]?.hint || ''),
+      React.createElement('div', { className: 'form-group' },
+        React.createElement('label', { className: 'form-label' }, 'Cookie JSON Array'),
+        React.createElement('textarea', {
+          className: 'input textarea',
+          rows: 8,
+          placeholder: '[{"name":"session","value":"...","domain":"..."}]',
+          value: cookieText,
+          onChange: e => setCookieText(e.target.value)
+        })
+      ),
+      React.createElement('div', { className: 'modal-actions' },
+        React.createElement('button', { className: 'btn btn-ghost', onClick: () => setActiveImport(null) }, 'Cancel'),
+        React.createElement('button', { className: 'btn btn-primary', onClick: importCookies, disabled: saving }, saving ? '⏳ Saving…' : 'Import Cookies')
       )
     )
   );
 }
 
 // ─── App Shell ────────────────────────────────────────────────
-const NAV_ITEMS = [
-  { id: 'health',     label: '🩺 Health',     title: 'System Health' },
-  { id: 'categories', label: '📂 Categories', title: 'Categories' },
-  { id: 'sources',    label: '📡 Sources',    title: 'Sources' },
-  { id: 'whatsapp',   label: '💬 WhatsApp',   title: 'WhatsApp Groups' },
-  { id: 'schedules',  label: '📅 Schedules',  title: 'Schedule Rules' },
-  { id: 'telegram',   label: '✈️ Telegram',   title: 'Telegram Session' },
-  { id: 'cookies',    label: '🍪 Cookies',    title: 'Cookie Manager' },
+const TABS = [
+  { id: 'health',     label: '📊 Health',     Component: HealthSection },
+  { id: 'categories', label: '📁 Categories', Component: CategoriesSection },
+  { id: 'sources',    label: '📡 Sources',    Component: SourcesSection },
+  { id: 'schedules',  label: '📅 Schedules',  Component: SchedulesSection },
+  { id: 'telegram',   label: '✈️ Telegram',   Component: TelegramSection },
+  { id: 'whatsapp',   label: '💬 WhatsApp',   Component: WhatsAppSection },
+  { id: 'cookies',    label: '🍪 Cookies',    Component: CookiesSection },
 ];
 
-const SECTION_MAP = {
-  health:     HealthSection,
-  categories: CategoriesSection,
-  sources:    SourcesSection,
-  whatsapp:   WhatsAppSection,
-  schedules:  SchedulesSection,
-  telegram:   TelegramSection,
-  cookies:    CookiesSection,
-};
-
 function App() {
-  const [active, setActive] = useState('health');
-  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [activeTab, setActiveTab] = useState('health');
+  const active = TABS.find(t => t.id === activeTab);
 
-  const current = NAV_ITEMS.find(n => n.id === active);
-  const SectionComp = SECTION_MAP[active];
-
-  return React.createElement('div', { className: `app-shell ${sidebarOpen ? 'sidebar-open' : ''}` },
-    // Sidebar
-    React.createElement('aside', { className: 'sidebar' },
-      React.createElement('div', { className: 'sidebar-logo' },
-        React.createElement('span', { className: 'logo-icon' }, '⚡'),
-        React.createElement('span', { className: 'logo-text' }, 'Brief Agent')
+  return React.createElement('div', { className: 'app' },
+    React.createElement('header', { className: 'app-header' },
+      React.createElement('div', { className: 'header-brand' },
+        React.createElement('span', { className: 'brand-icon' }, '🤖'),
+        React.createElement('span', { className: 'brand-name' }, 'Brief Agent'),
+        React.createElement('span', { className: 'brand-tag' }, 'Dashboard')
       ),
-      React.createElement('nav', { className: 'sidebar-nav' },
-        NAV_ITEMS.map(item =>
+      React.createElement('nav', { className: 'header-nav' },
+        TABS.map(t =>
           React.createElement('button', {
-            key: item.id,
-            className: `nav-item ${active === item.id ? 'active' : ''}`,
-            onClick: () => { setActive(item.id); setSidebarOpen(false); }
-          }, item.label)
+            key: t.id,
+            className: `nav-tab ${activeTab === t.id ? 'active' : ''}`,
+            onClick: () => setActiveTab(t.id)
+          }, t.label)
         )
       )
     ),
-
-    // Mobile overlay
-    sidebarOpen && React.createElement('div', { className: 'sidebar-overlay', onClick: () => setSidebarOpen(false) }),
-
-    // Main content
-    React.createElement('div', { className: 'main-area' },
-      React.createElement('header', { className: 'topbar' },
-        React.createElement('button', { className: 'hamburger', onClick: () => setSidebarOpen(o => !o) }, '☰'),
-        React.createElement('h1', { className: 'page-title' }, current?.title || ''),
-        React.createElement('div', { className: 'topbar-right' },
-          React.createElement('span', { className: 'version-badge' }, 'v2.0')
-        )
+    React.createElement('main', { className: 'app-main' },
+      React.createElement('div', { className: 'section-header' },
+        React.createElement('h2', { className: 'section-title' }, active?.label || '')
       ),
-      React.createElement('main', { className: 'content-area' },
-        React.createElement(SectionComp)
-      )
+      active && React.createElement(active.Component)
     ),
-
     React.createElement(Toast)
   );
 }
 
-// ─── Mount ────────────────────────────────────────────────────
-document.addEventListener('DOMContentLoaded', () => {
-  const root = createRoot(document.getElementById('root'));
-  root.render(React.createElement(App));
-});
+const root = createRoot(document.getElementById('root'));
+root.render(React.createElement(App));
