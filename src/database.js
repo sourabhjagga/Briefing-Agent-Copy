@@ -23,6 +23,7 @@ class DatabaseManager {
     this.db.pragma('synchronous = NORMAL');
     this.db.pragma('foreign_keys = ON');
     this._initSchema();
+    this._migrateScraperHealth();
     this._compileStatements();
     logger.info(`✅ Database initialized: ${resolvedPath}`);
   }
@@ -97,9 +98,12 @@ class DatabaseManager {
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
       );
 
+      -- scraper_health: source_id is UNIQUE so ON CONFLICT(source_id) works
+      -- in the upsert prepared statement. Existing installs without the
+      -- UNIQUE constraint are handled by _migrateScraperHealth() below.
       CREATE TABLE IF NOT EXISTS scraper_health (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        source_id TEXT NOT NULL,
+        source_id TEXT NOT NULL UNIQUE,
         source_type TEXT NOT NULL,
         last_success DATETIME,
         last_attempt DATETIME,
@@ -127,6 +131,84 @@ class DatabaseManager {
       this.db.exec(`ALTER TABLE categories ADD COLUMN whatsapp_delivery_jid TEXT`);
       logger.info('📊 Migrated: added whatsapp_delivery_jid column to categories');
     } catch (e) { /* already exists */ }
+  }
+
+  /**
+   * Migrate scraper_health to ensure source_id has a UNIQUE constraint.
+   *
+   * SQLite does not support ALTER TABLE ADD UNIQUE, so the only way to add
+   * a UNIQUE constraint to an existing table is to recreate it.
+   * This is safe: scraper_health is purely operational/ephemeral health data
+   * and losing it on first upgrade has zero impact on message history or briefs.
+   *
+   * Strategy:
+   *   1. Detect whether the current scraper_health table already has a UNIQUE
+   *      index on source_id by querying sqlite_master.
+   *   2. If not, rename the old table, create the new schema, copy the most
+   *      recent row per source_id (deduplicating), then drop the old table.
+   */
+  _migrateScraperHealth() {
+    try {
+      // Check if a unique index already exists on scraper_health.source_id
+      const hasUnique = this.db.prepare(`
+        SELECT COUNT(*) as cnt FROM sqlite_master
+        WHERE type IN ('index', 'table')
+          AND tbl_name = 'scraper_health'
+          AND (
+            sql LIKE '%UNIQUE%source_id%'
+            OR (type = 'index' AND sql LIKE '%source_id%' AND name LIKE '%unique%')
+          )
+      `).get();
+
+      // Also check via PRAGMA index_list for a unique index
+      const indexes = this.db.prepare(`PRAGMA index_list(scraper_health)`).all();
+      const uniqueOnSourceId = indexes.some(idx => {
+        if (!idx.unique) return false;
+        const cols = this.db.prepare(`PRAGMA index_info(${idx.name})`).all();
+        return cols.some(c => c.name === 'source_id');
+      });
+
+      if (uniqueOnSourceId) {
+        // Already migrated or freshly created with UNIQUE — nothing to do.
+        return;
+      }
+
+      logger.info('🔧 Migrating scraper_health: adding UNIQUE constraint on source_id...');
+
+      this.db.exec(`
+        -- Step 1: rename old table
+        ALTER TABLE scraper_health RENAME TO scraper_health_old;
+
+        -- Step 2: create new table with UNIQUE on source_id
+        CREATE TABLE scraper_health (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          source_id TEXT NOT NULL UNIQUE,
+          source_type TEXT NOT NULL,
+          last_success DATETIME,
+          last_attempt DATETIME,
+          error_count INTEGER DEFAULT 0,
+          last_error TEXT,
+          updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
+
+        -- Step 3: copy most-recent row per source_id (resolve duplicates)
+        INSERT INTO scraper_health (source_id, source_type, last_success, last_attempt, error_count, last_error, updated_at)
+        SELECT source_id, source_type, last_success, last_attempt, error_count, last_error, updated_at
+        FROM scraper_health_old
+        WHERE id IN (
+          SELECT MAX(id) FROM scraper_health_old GROUP BY source_id
+        );
+
+        -- Step 4: drop old table
+        DROP TABLE scraper_health_old;
+      `);
+
+      logger.info('✅ scraper_health migration complete.');
+    } catch (err) {
+      // Log but do NOT rethrow — a migration failure should never prevent boot.
+      // The app will fall back to the INSERT OR REPLACE path if ON CONFLICT still fails.
+      logger.warn(`⚠️ scraper_health migration warning (non-fatal): ${err.message}`);
+    }
   }
 
   _compileStatements() {
@@ -238,8 +320,6 @@ class DatabaseManager {
         INSERT INTO categories (slug, display_name, bot_token, chat_id, ai_prompt, is_active, delivery_channel, whatsapp_delivery_jid)
         VALUES (?, ?, ?, ?, ?, 1, ?, ?)
       `),
-      // FIX: updateCategory now includes is_active so a full PATCH does not
-      // silently shift delivery_channel into the is_active column position.
       updateCategory: this.db.prepare(`
         UPDATE categories
         SET display_name = ?, bot_token = ?, chat_id = ?, ai_prompt = ?,
@@ -257,18 +337,13 @@ class DatabaseManager {
       updateScheduleRule: this.db.prepare(`
         UPDATE schedule_rules SET cron_expression = ?, label = ?, is_active = ? WHERE id = ?
       `),
-      // FIX: toggleScheduleRule pre-compiled statement — was missing entirely.
-      // Called by PATCH /api/schedules/:id (toggle-only fast path) and
-      // PATCH /api/schedules/:id/toggle in index.js.
       toggleScheduleRule: this.db.prepare(`UPDATE schedule_rules SET is_active = ? WHERE id = ?`),
       deleteScheduleRule: this.db.prepare(`DELETE FROM schedule_rules WHERE id = ?`),
       deleteScheduleRulesByCategory: this.db.prepare(`DELETE FROM schedule_rules WHERE category_slug = ?`),
-      // FIX: getScraperHealthForSource is now a pre-compiled statement.
-      // Previously, upsertScraperHealth called db.prepare() inline on every
-      // invocation which re-compiled the query on each scraper run.
       getScraperHealthForSource: this.db.prepare(
         `SELECT error_count, last_success FROM scraper_health WHERE source_id = ?`
       ),
+      // ON CONFLICT(source_id) now works because source_id has UNIQUE constraint
       upsertScraperHealth: this.db.prepare(`
         INSERT INTO scraper_health (source_id, source_type, last_success, last_attempt, error_count, last_error, updated_at)
         VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
@@ -286,8 +361,6 @@ class DatabaseManager {
       `),
       getCookies: this.db.prepare(`SELECT cookies_json FROM cookies_store WHERE site = ?`),
       getAllCookieSites: this.db.prepare(`SELECT site, updated_at FROM cookies_store`),
-      // FIX: deleteCookies pre-compiled statement — was missing entirely.
-      // Called by DELETE /api/cookies/:site and POST /api/cookies/delete in index.js.
       deleteCookies: this.db.prepare(`DELETE FROM cookies_store WHERE site = ?`),
     };
   }
@@ -329,7 +402,6 @@ class DatabaseManager {
   }
 
   saveBrief(date, briefText, messageCount, categorySlug = 'cc') {
-    // categorySlug accepted for forward-compatibility with multi-category persistence.
     this.statements.saveBrief.run(date, briefText, messageCount);
     if (categorySlug && categorySlug !== 'cc') {
       logger.info(`[DB] saveBrief called for category "${categorySlug}" — stored in shared daily_briefs table.`);
@@ -345,7 +417,6 @@ class DatabaseManager {
   }
 
   saveSummary(date, messageCount, summaryText, sentToTelegram, categorySlug = 'cc') {
-    // categorySlug accepted for forward-compatibility with multi-category persistence.
     this.statements.saveSummary.run(date, messageCount, summaryText, sentToTelegram ? 1 : 0);
     if (categorySlug && categorySlug !== 'cc') {
       logger.info(`[DB] saveSummary called for category "${categorySlug}" — stored in shared summary_log table.`);
@@ -371,10 +442,6 @@ class DatabaseManager {
   getActiveSourcesByType(type) { return this.statements.getActiveSourcesByType.all(type).map(r => r.source_id); }
   getSourcesByCategory(categorySlug) { return this.statements.getSourcesByCategory.all(`${categorySlug}-%`); }
 
-  /**
-   * Returns the single most-recent message for a given source.
-   * Used by the /test bot command.
-   */
   getLatestMessageForSource(sourceType, cleanName, cleanSourceId) {
     return this.statements.getLatestMessageForSource.get(
       sourceType,
@@ -399,8 +466,6 @@ class DatabaseManager {
     return this.statements.insertCategory.run(slug, displayName, botToken, chatId, aiPrompt, deliveryChannel, whatsappDeliveryJid);
   }
 
-  // FIX: is_active is now an explicit parameter so the caller can persist
-  // the active state on a full update without a separate toggleCategory call.
   updateCategory(id, displayName, botToken, chatId, aiPrompt, isActive = 1, deliveryChannel = 'telegram', whatsappDeliveryJid = null) {
     this.statements.updateCategory.run(displayName, botToken, chatId, aiPrompt, isActive ? 1 : 0, deliveryChannel, whatsappDeliveryJid, id);
   }
@@ -408,25 +473,18 @@ class DatabaseManager {
   toggleCategory(id, isActive) { this.statements.toggleCategory.run(isActive ? 1 : 0, id); }
   deleteCategory(id) { this.statements.deleteCategory.run(id); }
 
-  // FIX: addCategory — public alias for insertCategory().
-  // Called as database.addCategory(...) in POST /api/categories (index.js).
   addCategory(slug, displayName, botToken, chatId, aiPrompt, deliveryChannel = 'telegram', whatsappDeliveryJid = null) {
     return this.insertCategory(slug, displayName, botToken, chatId, aiPrompt, deliveryChannel, whatsappDeliveryJid);
   }
 
   getAllScheduleRules() { return this.statements.getAllScheduleRules.all(); }
   getScheduleRulesByCategory(slug) { return this.statements.getScheduleRulesByCategory.all(slug); }
-
-  // FIX: getScheduleRules — alias for getScheduleRulesByCategory().
-  // Called as database.getScheduleRules(slug) in GET /api/schedules/:slug (index.js).
   getScheduleRules(slug) { return this.getScheduleRulesByCategory(slug); }
 
   insertScheduleRule(categorySlug, cronExpression, label) {
     return this.statements.insertScheduleRule.run(categorySlug, cronExpression, label);
   }
 
-  // FIX: addScheduleRule — public alias for insertScheduleRule().
-  // Called as database.addScheduleRule(...) in POST /api/schedules (index.js).
   addScheduleRule(categorySlug, cronExpression, label) {
     return this.insertScheduleRule(categorySlug, cronExpression, label);
   }
@@ -435,11 +493,7 @@ class DatabaseManager {
     this.statements.updateScheduleRule.run(cronExpression, label, isActive ? 1 : 0, id);
   }
 
-  // FIX: toggleScheduleRule — was missing entirely.
-  // Called by the toggle-only fast path in PATCH /api/schedules/:id and
-  // by PATCH /api/schedules/:id/toggle in index.js.
   toggleScheduleRule(id, isActive) { this.statements.toggleScheduleRule.run(isActive ? 1 : 0, id); }
-
   deleteScheduleRule(id) { this.statements.deleteScheduleRule.run(id); }
   deleteScheduleRulesByCategory(slug) { this.statements.deleteScheduleRulesByCategory.run(slug); }
 
@@ -488,8 +542,6 @@ class DatabaseManager {
     catch (err) { return []; }
   }
 
-  // FIX: deleteCookies — was missing entirely.
-  // Called by DELETE /api/cookies/:site and POST /api/cookies/delete in index.js.
   deleteCookies(site) {
     try { this.statements.deleteCookies.run(site); }
     catch (err) { logger.error(`Failed to delete cookies for ${site} in DB: ${err.message}`); }
@@ -498,8 +550,6 @@ class DatabaseManager {
   upsertScraperHealth(sourceId, sourceType, success, errorMsg = null) {
     const now = new Date().toISOString();
     try {
-      // FIX: use pre-compiled statement instead of inline db.prepare() which
-      // was re-compiling this query on every single scraper run invocation.
       const existing = this.statements.getScraperHealthForSource.get(sourceId);
       const errCount = success ? 0 : (existing ? existing.error_count + 1 : 1);
       const lastSuccess = success ? now : (existing?.last_success || null);
@@ -516,8 +566,6 @@ class DatabaseManager {
     catch (err) { return []; }
   }
 
-  // FIX: getAllScraperHealth — alias for getScraperHealth().
-  // Called as database.getAllScraperHealth() in GET /api/health (index.js).
   getAllScraperHealth() { return this.getScraperHealth(); }
 
   close() {

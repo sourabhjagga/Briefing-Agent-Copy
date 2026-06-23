@@ -1,14 +1,11 @@
 services:
   cc-brief-agent:
-    build:
-      context: .
-      dockerfile: Dockerfile
+    # Pull pre-built image from Docker Hub instead of building from source.
+    # This is pushed automatically by .github/workflows/docker-publish-fresh.yml
+    # on every push to main. No local build needed on the host.
+    image: sourabhjagga/briefing-agent-fresh:latest
     container_name: cc-brief-agent
     restart: unless-stopped
-    # warp-proxy is an optional fallback — cc-brief-agent starts after warp
-    # is confirmed listening on SOCKS5 port, but warp failure won't block the app
-    # because condition: service_healthy only gates startup order, not continued
-    # operation. If warp later goes unhealthy, cc-brief-agent keeps running.
     depends_on:
       warp-proxy:
         condition: service_healthy
@@ -63,15 +60,10 @@ services:
     restart: unless-stopped
 
   warp-proxy:
-    # Cloudflare WARP SOCKS5 proxy — fallback for when Telegram is blocked.
-    # Healthcheck uses nc (netcat) to verify the SOCKS5 TCP port is open.
-    # wget/curl checking http:// against a SOCKS5 port always fails — fixed here.
     image: ghcr.io/mon-ius/docker-warp-socks:v6
     container_name: warp-proxy
     restart: unless-stopped
     healthcheck:
-      # nc -z = TCP port scan only (no data sent). Correctly validates SOCKS5.
-      # wget against a SOCKS5 port sends HTTP which SOCKS5 rejects — that was the bug.
       test: ["CMD-SHELL", "nc -z localhost 9091 || exit 1"]
       interval: 15s
       timeout: 5s
