@@ -10,10 +10,9 @@ ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
 # Copy package descriptors
 COPY package*.json ./
 
-# Install dependencies with npm install (no package-lock.json required)
+# Install dependencies
 # --foreground-scripts ensures native addon postinstall scripts run correctly as root
-RUN --mount=type=cache,target=/root/.npm \
-    npm install --foreground-scripts
+RUN npm install --foreground-scripts
 
 # Copy source files and static assets
 COPY src/ ./src
@@ -36,31 +35,30 @@ ENV NODE_ENV=production \
     PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
 
 # Install Chromium and system dependencies for Puppeteer + yt-dlp + ffmpeg
-# Note: libasound2 was renamed to libasound2t64 in Debian Bookworm
-RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
-    --mount=type=cache,target=/var/lib/apt,sharing=locked \
-    apt-get update && apt-get install -y \
-    chromium \
-    libnss3 \
-    libnspr4 \
-    libatk1.0-0 \
-    libatk-bridge2.0-0 \
-    libcups2 \
-    libdrm2 \
-    libxkbcommon0 \
-    libxcomposite1 \
-    libxdamage1 \
-    libxext6 \
-    libxfixes3 \
-    libxrandr2 \
-    libgbm1 \
-    libasound2t64 \
-    python3 \
-    python3-pip \
-    ffmpeg \
-    --no-install-recommends \
-    && pip3 install yt-dlp --break-system-packages \
-    && rm -rf /root/.cache/pip
+# libasound2 was renamed to libasound2t64 in Debian Bookworm; install whichever is available
+RUN apt-get update && \
+    apt-get install -y \
+        chromium \
+        libnss3 \
+        libnspr4 \
+        libatk1.0-0 \
+        libatk-bridge2.0-0 \
+        libcups2 \
+        libdrm2 \
+        libxkbcommon0 \
+        libxcomposite1 \
+        libxdamage1 \
+        libxext6 \
+        libxfixes3 \
+        libxrandr2 \
+        libgbm1 \
+        python3 \
+        python3-pip \
+        ffmpeg \
+        --no-install-recommends && \
+    (apt-get install -y libasound2t64 || apt-get install -y libasound2) && \
+    pip3 install yt-dlp --break-system-packages && \
+    rm -rf /var/lib/apt/lists/* /root/.cache/pip
 
 # Create a non-root user for security
 RUN groupadd -r agentsg && useradd -r -m -g agentsg agentuser
