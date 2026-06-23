@@ -8,6 +8,8 @@ services:
     depends_on:
       warp-proxy:
         condition: service_healthy
+      flaresolverr:
+        condition: service_started
     volumes:
       - cc_brief_data:/app/data
       - cc_brief_logs:/app/logs
@@ -44,10 +46,10 @@ services:
         max-file: "3"
 
   flaresolverr:
-    # Pinned to last ARM64-confirmed stable release.
-    # ghcr.io/flaresolverr/flaresolverr:latest has no guaranteed ARM64
-    # manifest and will fail on Oracle Linux ARM64 VMs.
-    image: ghcr.io/flaresolverr/flaresolverr:v3.3.21
+    # User confirmed ghcr.io/flaresolverr/flaresolverr was working fine
+    # previously. Docker Hub page confirms multi-arch (amd64 + arm64)
+    # images are published under the :latest tag.
+    image: ghcr.io/flaresolverr/flaresolverr:latest
     container_name: flaresolverr
     mem_limit: 1g
     environment:
@@ -59,24 +61,23 @@ services:
     restart: unless-stopped
 
   warp-proxy:
-    # monius/docker-warp-socks:latest has no ARM64 manifest and will
-    # fail with "no matching manifest for linux/arm64" on Oracle ARM64.
-    # caominhtuan/docker-warp-socks ships a proper multi-arch manifest.
-    image: caominhtuan/docker-warp-socks:latest
+    # ghcr.io/mon-ius/docker-warp-socks:v6 — user confirmed monius was
+    # the working image. v6 is the current stable release published at
+    # ghcr.io (GHCR preferred by upstream for security). v6 uses the
+    # SagerNet/sing-box core and does NOT need NET_ADMIN, SYS_MODULE,
+    # sysctls, or a /lib/modules bind mount — all removed.
+    # Multi-platform: linux/amd64, linux/arm64, linux/arm, and more.
+    image: ghcr.io/mon-ius/docker-warp-socks:v6
     container_name: warp-proxy
     restart: unless-stopped
-    cap_add:
-      - NET_ADMIN
-      - SYS_MODULE
-    sysctls:
-      - net.ipv6.conf.all.disable_ipv6=0
-      - net.ipv4.conf.all.src_valid_mark=1
     healthcheck:
-      test: ["CMD", "nc", "-z", "localhost", "9091"]
-      interval: 10s
-      timeout: 5s
+      # wget is always available in the alpine v6 base image.
+      # Checks that the mixed proxy port 9091 is accepting connections.
+      test: ["CMD", "wget", "-qO-", "--timeout=5", "http://localhost:9091"]
+      interval: 15s
+      timeout: 8s
       retries: 5
-      start_period: 30s
+      start_period: 40s
 
 volumes:
   cc_brief_data:
