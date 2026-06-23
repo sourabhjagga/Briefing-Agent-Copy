@@ -41,6 +41,10 @@ function validateConfig() {
   if (!process.env.OPENROUTER_API_KEY) {
     logger.warn('⚠️ OPENROUTER_API_KEY is not set. AI fallback models will be unavailable if Gemini fails.');
   }
+
+  if (!process.env.WHATSAPP_ADMIN_JID) {
+    logger.warn('⚠️ WHATSAPP_ADMIN_JID is not set. WhatsApp alert delivery via sendSystemAlert will be skipped.');
+  }
 }
 
 function parseIdParam(rawId) {
@@ -243,15 +247,19 @@ function startDashboardServer(database, whatsapp, telegramUser, scheduler, summa
       }
 
       if (!display_name) return res.status(400).json({ error: 'Missing display_name' });
+
+      // FIX: pass is_active as its own explicit argument so it lands in the
+      // correct column. Previously the call had is_active in the delivery_channel
+      // position, silently corrupting delivery_channel and whatsapp_delivery_jid.
       database.updateCategory(
         id,
         display_name,
         bot_token,
         chat_id,
         ai_prompt,
-        is_active !== undefined ? is_active : 1,
-        delivery_channel,
-        whatsapp_delivery_jid
+        is_active !== undefined ? (is_active ? 1 : 0) : existingCategory.is_active,
+        delivery_channel || existingCategory.delivery_channel,
+        whatsapp_delivery_jid !== undefined ? whatsapp_delivery_jid : existingCategory.whatsapp_delivery_jid
       );
 
       const updatedCat = database.getAllCategories().find(c => c.id === id);

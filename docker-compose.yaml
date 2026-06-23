@@ -22,6 +22,9 @@ services:
       - SUMMARY_HOUR=${SUMMARY_HOUR:-6}
       - SUMMARY_MINUTE=${SUMMARY_MINUTE:-0}
       - WHATSAPP_GROUPS=${WHATSAPP_GROUPS}
+      # FIX: WHATSAPP_ADMIN_JID was missing — sendSystemAlert silently skipped
+      # WhatsApp alert delivery in all Docker/Coolify deployments.
+      - WHATSAPP_ADMIN_JID=${WHATSAPP_ADMIN_JID}
       - TZ=${TZ:-Asia/Kolkata}
       - LOG_LEVEL=${LOG_LEVEL:-info}
       - MAX_MESSAGES_FOR_SUMMARY=${MAX_MESSAGES_FOR_SUMMARY:-2000}
@@ -65,3 +68,6 @@ services:
       retries: 5
       start_period: 30s
 
+volumes:
+  cc_brief_data_test:
+  cc_brief_logs:

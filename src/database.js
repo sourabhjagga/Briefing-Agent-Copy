@@ -236,9 +236,12 @@ class DatabaseManager {
         INSERT INTO categories (slug, display_name, bot_token, chat_id, ai_prompt, is_active, delivery_channel, whatsapp_delivery_jid)
         VALUES (?, ?, ?, ?, ?, 1, ?, ?)
       `),
+      // FIX: updateCategory now includes is_active so a full PATCH does not
+      // silently shift delivery_channel into the is_active column position.
       updateCategory: this.db.prepare(`
         UPDATE categories
-        SET display_name = ?, bot_token = ?, chat_id = ?, ai_prompt = ?, delivery_channel = ?, whatsapp_delivery_jid = ?
+        SET display_name = ?, bot_token = ?, chat_id = ?, ai_prompt = ?,
+            is_active = ?, delivery_channel = ?, whatsapp_delivery_jid = ?
         WHERE id = ?
       `),
       toggleCategory: this.db.prepare(`UPDATE categories SET is_active = ? WHERE id = ?`),
@@ -254,6 +257,12 @@ class DatabaseManager {
       `),
       deleteScheduleRule: this.db.prepare(`DELETE FROM schedule_rules WHERE id = ?`),
       deleteScheduleRulesByCategory: this.db.prepare(`DELETE FROM schedule_rules WHERE category_slug = ?`),
+      // FIX: getScraperHealthForSource is now a pre-compiled statement.
+      // Previously, upsertScraperHealth called db.prepare() inline on every
+      // invocation which re-compiled the query on each scraper run.
+      getScraperHealthForSource: this.db.prepare(
+        `SELECT error_count, last_success FROM scraper_health WHERE source_id = ?`
+      ),
       upsertScraperHealth: this.db.prepare(`
         INSERT INTO scraper_health (source_id, source_type, last_success, last_attempt, error_count, last_error, updated_at)
         VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
@@ -355,7 +364,7 @@ class DatabaseManager {
 
   /**
    * Returns the single most-recent message for a given source.
-   * Used by the /test bot command. Replaces the raw db.prepare() that was inline in telegram-bot.js.
+   * Used by the /test bot command.
    */
   getLatestMessageForSource(sourceType, cleanName, cleanSourceId) {
     return this.statements.getLatestMessageForSource.get(
@@ -381,8 +390,10 @@ class DatabaseManager {
     return this.statements.insertCategory.run(slug, displayName, botToken, chatId, aiPrompt, deliveryChannel, whatsappDeliveryJid);
   }
 
-  updateCategory(id, displayName, botToken, chatId, aiPrompt, deliveryChannel = 'telegram', whatsappDeliveryJid = null) {
-    this.statements.updateCategory.run(displayName, botToken, chatId, aiPrompt, deliveryChannel, whatsappDeliveryJid, id);
+  // FIX: is_active is now an explicit parameter so the caller can persist
+  // the active state on a full update without a separate toggleCategory call.
+  updateCategory(id, displayName, botToken, chatId, aiPrompt, isActive = 1, deliveryChannel = 'telegram', whatsappDeliveryJid = null) {
+    this.statements.updateCategory.run(displayName, botToken, chatId, aiPrompt, isActive ? 1 : 0, deliveryChannel, whatsappDeliveryJid, id);
   }
 
   toggleCategory(id, isActive) { this.statements.toggleCategory.run(isActive ? 1 : 0, id); }
@@ -450,12 +461,13 @@ class DatabaseManager {
   upsertScraperHealth(sourceId, sourceType, success, errorMsg = null) {
     const now = new Date().toISOString();
     try {
-      const existing = this.db.prepare('SELECT error_count FROM scraper_health WHERE source_id = ?').get(sourceId);
+      // FIX: use pre-compiled statement instead of inline db.prepare() which
+      // was re-compiling this query on every single scraper run invocation.
+      const existing = this.statements.getScraperHealthForSource.get(sourceId);
       const errCount = success ? 0 : (existing ? existing.error_count + 1 : 1);
+      const lastSuccess = success ? now : (existing?.last_success || null);
       this.statements.upsertScraperHealth.run(
-        sourceId, sourceType,
-        success ? now : (existing?.last_success || null),
-        now, errCount, errorMsg
+        sourceId, sourceType, lastSuccess, now, errCount, errorMsg
       );
     } catch (err) {
       logger.warn(`Could not update scraper health for ${sourceId}: ${err.message}`);
