@@ -123,7 +123,8 @@ function startDashboardServer(database, whatsapp, telegramUser, scheduler, summa
   const app = express();
 
   app.use(express.json());
-  app.use(express.static(path.join(__dirname, '../public')));
+  // Disable redirect so /sources doesn't get redirected to /sources/ (which breaks the catch-all)
+  app.use(express.static(path.join(__dirname, '../public'), { redirect: false }));
 
   app.get('/health', (req, res) => {
     const waStatus = whatsapp.getStatus();
@@ -729,17 +730,27 @@ function startDashboardServer(database, whatsapp, telegramUser, scheduler, summa
 
   // Serve Next.js static export HTML routes
   // e.g. /sources -> sources.html, /categories -> categories.html
+  // Also serves files inside subdirectories (e.g. /sources/ -> /sources.html)
   app.get('*', (req, res) => {
     if (req.path.startsWith('/api/')) {
       return res.status(404).json({ error: 'API route not found' });
     }
     const publicDir = path.join(__dirname, '../public');
-    const htmlPath = path.join(publicDir, req.path.endsWith('.html') ? req.path : req.path + '.html');
+    // Normalize: strip trailing slash and ensure we try .html
+    let cleanPath = req.path.replace(/\/+$/, '') || '/';
+    const htmlPath = path.join(publicDir, cleanPath.endsWith('.html') ? cleanPath : cleanPath + '.html');
     const indexPath = path.join(publicDir, 'index.html');
     if (fs.existsSync(htmlPath)) {
       res.sendFile(htmlPath);
     } else {
-      res.sendFile(indexPath);
+      // Also try: if path has a directory with the same name, serve its index.html
+      // e.g. /sources/other -> /sources/other.html, or fallback to index
+      const dirIndexPath = path.join(publicDir, cleanPath, 'index.html');
+      if (fs.existsSync(dirIndexPath)) {
+        res.sendFile(dirIndexPath);
+      } else {
+        res.sendFile(indexPath);
+      }
     }
   });
 

@@ -6,7 +6,7 @@
   "scripts": {
     "start": "node src/index.js",
     "dev": "node src/index.js",
-    "build": "cp -r ../dashboard/.next/server/app/* public/ && cp -r ../dashboard/.next/static/* public/ 2>/dev/null || true"
+    "build": "echo 'Static export already handled by Dockerfile mv'"
   },
   "keywords": [
     "credit-cards",
