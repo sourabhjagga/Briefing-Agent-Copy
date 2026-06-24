@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, Suspense } from "react";
+import { usePathname } from "next/navigation";
 import { Menu, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import RootLayout from "@/root-layout";
@@ -23,6 +24,7 @@ export default function DashboardLayout({
   children: React.ReactNode;
 }) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const pathname = usePathname();
 
   return (
     <RootLayout>
@@ -61,7 +63,14 @@ export default function DashboardLayout({
                   <li key={item.name}>
                     <a
                       href={item.href}
-                      className="flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors hover:bg-accent hover:text-accent-foreground"
+                      className={cn(
+                        "flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
+                        item.href === "/"
+                          ? pathname === "/" && "bg-accent/10 text-accent font-medium"
+                          : pathname.startsWith(item.href) && "bg-accent/10 text-accent font-medium",
+                        !(item.href === "/" ? pathname === "/" : pathname.startsWith(item.href)) &&
+                          "hover:bg-accent hover:text-accent-foreground"
+                      )}
                     >
                       <span className="text-lg">{item.icon}</span>
                       <span>{item.name}</span>
