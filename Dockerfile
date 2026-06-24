@@ -2,15 +2,21 @@ FROM node:20@sha256:8f693eaa7e0a8e71560c9a82b55fd54c2ae920a2ba5d2cde28bac7d1c01c
 
 ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
 
-WORKDIR /app/apps/api
+WORKDIR /app
 
-COPY apps/api/package.json ./
+COPY package.json ./
+COPY apps/api/package.json ./apps/api/package.json
+COPY apps/dashboard/package.json ./apps/dashboard/package.json
 
 RUN npm install --foreground-scripts
 
-COPY apps/api ./
+COPY apps/dashboard ./apps/dashboard
+RUN npm run build --prefix apps/dashboard
 
-RUN npm run build
+COPY apps/api ./apps/api
+RUN cp -r apps/dashboard/out apps/api/public
+
+RUN npm run build --prefix apps/api
 
 FROM node:20-slim@sha256:2cf067cfed83d5ea958367df9f966191a942351a2df77d6f0193e162b5febfc0 AS runner
 
