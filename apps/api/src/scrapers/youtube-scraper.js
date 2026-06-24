@@ -4,15 +4,13 @@
  * Monitors channel RSS feeds, downloads captions directly, and summarizes via the central Summarizer.
  *
  * FAILPROOF THREE-LAYER TRANSCRIPT PIPELINE:
- * - Layer 1: Standard YouTube auto-captions/subtitles via youtube-transcript.
- * - Layer 2: yt-dlp binary audio download + Gemini 3.1 Flash Lite speech-to-text.
- *            yt-dlp natively bypasses YouTube bot detection — no cookies or browser required.
+ * - Layer 1: yt-dlp --write-subs --write-auto-subs (auto/uploaded captions, no audio download).
+ * - Layer 2: yt-dlp audio download + Gemini 3.1 Flash Lite speech-to-text.
  * - Layer 3: Google Search Grounding via Gemini 2.5 Flash (reconstructs video content from web).
- * - Automatically cleans up temporary audio files to maintain zero disk footprint.
+ * - Automatically cleans up all temporary files to maintain zero disk footprint.
  */
 
 const axios = require('axios');
-const { YoutubeTranscript } = require('youtube-transcript');
 const { spawn } = require('child_process');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const fs = require('fs');
@@ -360,22 +358,91 @@ Provide a complete, long text explanation (~500 words) of the video content.`;
   }
 
   async fetchTranscript(videoId) {
-    logger.debug(`Fetching transcript directly via youtube-transcript API for: ${videoId}`);
-    // Explicitly throw standard exceptions so the outer block cascades to Gemini fallback
-    const tracks = await YoutubeTranscript.fetchTranscript(videoId, { lang: 'hi' })
-      .catch(() => YoutubeTranscript.fetchTranscript(videoId, { lang: 'en' }))
-      .catch(() => YoutubeTranscript.fetchTranscript(videoId));
+    logger.debug(`Fetching subtitles via yt-dlp --write-subs for: ${videoId}`);
 
-    if (!tracks || tracks.length === 0) return '';
-    
-    return tracks.map(t => t.text)
-      .join(' ')
-      .replace(/&amp;/g, '&')
-      .replace(/&lt;/g, '<')
-      .replace(/&gt;/g, '>')
-      .replace(/&quot;/g, '"')
-      .replace(/&#39;/g, "'")
-      .trim();
+    const tempDir = path.resolve(__dirname, '../../data/temp');
+    if (!fs.existsSync(tempDir)) {
+      fs.mkdirSync(tempDir, { recursive: true });
+    }
+
+    const outputTemplate = path.join(tempDir, `sub_${videoId}`);
+    const ytdlpArgs = [
+      `https://www.youtube.com/watch?v=${videoId}`,
+      '--write-subs', '--write-auto-subs',
+      '--sub-langs', 'en,hi',
+      '--skip-download',
+      '--convert-subs', 'srt',
+      '--no-playlist',
+      '--no-warnings',
+      '--quiet',
+      '--no-progress',
+      '--output', outputTemplate
+    ];
+
+    let cookiePath = null;
+    const ytCookies = this.database.getCookies('youtube');
+    if (ytCookies && Array.isArray(ytCookies) && ytCookies.length > 0) {
+      cookiePath = path.resolve(__dirname, `../../data/yt_cookies_${videoId}.txt`);
+      const netscapeLines = ytCookies.map((c) => {
+        const domain = c.domain || '.youtube.com';
+        const domainFlag = domain.startsWith('.') ? 'TRUE' : 'FALSE';
+        const p = c.path || '/';
+        const secure = c.secure ? 'TRUE' : 'FALSE';
+        const expires = c.expirationDate || Math.floor(Date.now() / 1000) + 86400 * 365;
+        return `${domain}\t${domainFlag}\t${p}\t${secure}\t${expires}\t${c.name}\t${c.value}`;
+      });
+      fs.writeFileSync(cookiePath, `# Netscape HTTP Cookie File\n${netscapeLines.join('\n')}\n`);
+      ytdlpArgs.push('--cookies', cookiePath);
+      logger.debug(`🍪 Exported ${ytCookies.length} YouTube cookies for subtitle fetch.`);
+    }
+
+    let subFiles = [];
+
+    try {
+      await new Promise((resolve, reject) => {
+        const proc = spawn('yt-dlp', ytdlpArgs);
+        let stderr = '';
+        proc.stderr.on('data', (data) => { stderr += data.toString(); });
+        proc.on('close', (code) => {
+          if (code === 0) resolve();
+          else reject(new Error(`yt-dlp exited code ${code}: ${stderr.trim()}`.substring(0, 300)));
+        });
+        proc.on('error', (err) => reject(new Error(`Failed to spawn yt-dlp: ${err.message}`)));
+      });
+
+      subFiles = fs.readdirSync(tempDir)
+        .filter(f => f.startsWith(`sub_${videoId}`) && f.endsWith('.srt'))
+        .sort((a, b) => {
+          const pref = ['en', 'hi'];
+          const ra = pref.findIndex(p => a.includes(`.${p}.`));
+          const rb = pref.findIndex(p => b.includes(`.${p}.`));
+          return (ra === -1 ? 99 : ra) - (rb === -1 ? 99 : rb);
+        });
+
+      if (subFiles.length === 0) {
+        throw new Error('No subtitle files found after yt-dlp run');
+      }
+
+      const subPath = path.join(tempDir, subFiles[0]);
+      const content = fs.readFileSync(subPath, 'utf-8');
+
+      const text = content
+        .replace(/\d+\s*\n\d{2}:\d{2}:\d{2}[,\.]\d+ --> \d{2}:\d{2}:\d{2}[,\.]\d+/g, '')
+        .replace(/<[^>]+>/g, '')
+        .replace(/^\s*[\r\n]/gm, '\n')
+        .replace(/\n{3,}/g, '\n\n')
+        .trim();
+
+      logger.debug(`✅ yt-dlp subtitle fetch succeeded (~${text.length} chars from ${subFiles[0]})`);
+      return text;
+    } finally {
+      for (const f of subFiles || []) {
+        try { fs.unlinkSync(path.join(tempDir, f)); } catch (e) { /* ignore */ }
+      }
+      if (cookiePath && fs.existsSync(cookiePath)) {
+        try { fs.unlinkSync(cookiePath); } catch (e) { /* ignore */ }
+      }
+    }
   }
 }
 

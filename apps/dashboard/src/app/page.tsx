@@ -28,6 +28,17 @@ interface ScraperHealth {
   error_count: number;
 }
 
+interface SourceStats {
+  source_type: string;
+  total: number;
+  today: number;
+}
+
+interface DashboardStats {
+  whatsappTotalMessages: number;
+  scraperStats: SourceStats[];
+}
+
 export default function Dashboard() {
   const [searchTerm, setSearchTerm] = useState('');
   const { toast } = useToast();
@@ -36,6 +47,7 @@ export default function Dashboard() {
   const refreshDashboard = () => {
     queryClient.invalidateQueries({ queryKey: ['health'] });
     queryClient.invalidateQueries({ queryKey: ['scraper-health'] });
+    queryClient.invalidateQueries({ queryKey: ['dashboard-stats'] });
     toast('Dashboard refreshed', 'success');
   };
 
@@ -54,6 +66,13 @@ export default function Dashboard() {
     queryKey: ['scraper-health'],
     queryFn: () => apiRequest<ScraperHealth[]>('/api/health'),
   });
+
+  const { data: stats } = useQuery<DashboardStats>({
+    queryKey: ['dashboard-stats'],
+    queryFn: () => apiRequest<DashboardStats>('/api/stats'),
+  });
+
+  const scraperStatsMap = new Map(stats?.scraperStats.map(s => [s.source_type, s]));
 
   const formatTimeAgo = formatTimestamp;
 
@@ -85,6 +104,12 @@ export default function Dashboard() {
                 <span className="text-sm font-medium">Messages Today</span>
                 <span className="text-sm text-muted-foreground">
                   {health?.messagesToday || '0'}
+                </span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-sm font-medium">Total Collected</span>
+                <span className="text-sm text-muted-foreground">
+                  {stats?.whatsappTotalMessages?.toLocaleString() || '0'}
                 </span>
               </div>
               <div className="flex items-center justify-between">
@@ -167,6 +192,8 @@ export default function Dashboard() {
                 <tr className="border-b">
                   <th className="text-left py-3 px-4 font-medium">Source</th>
                   <th className="text-left py-3 px-4 font-medium">Type</th>
+                  <th className="text-left py-3 px-4 font-medium">Msgs Collected</th>
+                  <th className="text-left py-3 px-4 font-medium">In Last Brief</th>
                   <th className="text-left py-3 px-4 font-medium">Last Success</th>
                   <th className="text-left py-3 px-4 font-medium">Last Attempt</th>
                   <th className="text-left py-3 px-4 font-medium">Errors</th>
@@ -175,7 +202,7 @@ export default function Dashboard() {
               </thead>
               <tbody>
                 {Array.from({ length: 5 }).map((_, i) => (
-                  <TableRowSkeleton key={i} cols={6} />
+                  <TableRowSkeleton key={i} cols={8} />
                 ))}
               </tbody>
             </table>
@@ -189,6 +216,8 @@ export default function Dashboard() {
                 <tr className="border-b">
                   <th className="text-left py-3 px-4 font-medium">Source</th>
                   <th className="text-left py-3 px-4 font-medium">Type</th>
+                  <th className="text-left py-3 px-4 font-medium">Msgs Collected</th>
+                  <th className="text-left py-3 px-4 font-medium">In Last Brief</th>
                   <th className="text-left py-3 px-4 font-medium">Last Success</th>
                   <th className="text-left py-3 px-4 font-medium">Last Attempt</th>
                   <th className="text-left py-3 px-4 font-medium">Errors</th>
@@ -201,13 +230,21 @@ export default function Dashboard() {
                     s.source_id.toLowerCase().includes(searchTerm.toLowerCase()) ||
                     s.source_type.toLowerCase().includes(searchTerm.toLowerCase())
                   )
-                  .map((s) => (
+                  .map((s) => {
+                    const ss = scraperStatsMap.get(s.source_type);
+                    return (
                     <tr key={s.source_id} className="border-b hover:bg-surface-2">
                       <td className="py-3 px-4 font-mono text-xs">{s.source_id}</td>
                       <td className="py-3 px-4">
                         <Badge variant="info" className="text-xs">
                           {s.source_type}
                         </Badge>
+                      </td>
+                      <td className="py-3 px-4 text-muted-foreground font-medium">
+                        {ss?.total?.toLocaleString() || '0'}
+                      </td>
+                      <td className="py-3 px-4 text-muted-foreground">
+                        {ss?.today?.toLocaleString() || '0'}
                       </td>
                       <td className="py-3 px-4 text-muted-foreground">
                         {s.last_success ? formatTimeAgo(s.last_success) : '\u2014'}
@@ -233,7 +270,8 @@ export default function Dashboard() {
                         </Badge>
                       </td>
                     </tr>
-                  ))}
+                    );
+                  })}
               </tbody>
             </table>
           </div>

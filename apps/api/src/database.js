@@ -257,6 +257,22 @@ class DatabaseManager {
         FROM messages WHERE timestamp >= ? AND source_type LIKE ?
         GROUP BY group_name ORDER BY count DESC
       `),
+      getMessageCountBySourceType: this.db.prepare(`
+        SELECT source_type, COUNT(*) as count
+        FROM messages
+        GROUP BY source_type
+        ORDER BY count DESC
+      `),
+      getTodayMessageCountBySourceType: this.db.prepare(`
+        SELECT source_type, COUNT(*) as count
+        FROM messages
+        WHERE timestamp >= ?
+        GROUP BY source_type
+        ORDER BY count DESC
+      `),
+      getTotalWhatsAppMessages: this.db.prepare(`
+        SELECT COUNT(*) as count FROM messages WHERE source_type LIKE ?
+      `),
       cleanup: this.db.prepare(`
         DELETE FROM messages WHERE timestamp < ?
       `),
@@ -437,6 +453,21 @@ class DatabaseManager {
     const total = this.statements.getStatsTotal.get(since, `${sourcePrefix}%`).total;
     const groups = this.statements.getStatsByGroup.all(since, `${sourcePrefix}%`);
     return { totalMessages: total, byGroup: groups };
+  }
+
+  getMessageCountBySourceType() {
+    return this.statements.getMessageCountBySourceType.all();
+  }
+
+  getTodayMessageCountBySourceType() {
+    const now = Date.now();
+    const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
+    const startOfDay = Math.floor((Math.floor((now + IST_OFFSET_MS) / 86400000) * 86400000 - IST_OFFSET_MS) / 1000);
+    return this.statements.getTodayMessageCountBySourceType.all(startOfDay);
+  }
+
+  getTotalWhatsAppMessages() {
+    return this.statements.getTotalWhatsAppMessages.get('%whatsapp%').count;
   }
 
   cleanup(daysToKeep = 30) {

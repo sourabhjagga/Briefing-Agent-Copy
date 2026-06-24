@@ -147,6 +147,28 @@ function startDashboardServer(database, whatsapp, telegramUser, scheduler, summa
     }
   });
 
+  app.get('/api/stats', (req, res) => {
+    try {
+      const sourceCounts = database.getMessageCountBySourceType();
+      const todayCounts = database.getTodayMessageCountBySourceType();
+      const todayMap = {};
+      for (const row of todayCounts) {
+        todayMap[row.source_type] = row.count;
+      }
+      const fullCounts = sourceCounts.map(row => ({
+        source_type: row.source_type,
+        total: row.count,
+        today: todayMap[row.source_type] || 0
+      }));
+      res.json({
+        whatsappTotalMessages: database.getTotalWhatsAppMessages(),
+        scraperStats: fullCounts
+      });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   app.get('/api/sources', (req, res) => {
     try {
       res.json(database.getAllSources());

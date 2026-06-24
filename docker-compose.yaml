@@ -14,8 +14,6 @@ services:
       warp-proxy:
         condition: service_healthy
         restart: false
-      flaresolverr:
-        condition: service_started
     volumes:
       - cc_brief_data:/app/data
       - cc_brief_logs:/app/logs
@@ -44,24 +42,11 @@ services:
       - TELEGRAM_API_ID=${TELEGRAM_API_ID}
       - TELEGRAM_API_HASH=${TELEGRAM_API_HASH}
       - TELEGRAM_PROXY=socks5://warp-proxy:9091
-      - FLARESOLVERR_URL=http://flaresolverr:8191
     logging:
       driver: "json-file"
       options:
         max-size: "10m"
         max-file: "3"
-
-  flaresolverr:
-    image: ghcr.io/flaresolverr/flaresolverr:latest
-    container_name: flaresolverr
-    mem_limit: 1g
-    environment:
-      - LOG_LEVEL=${FLARESOLVERR_LOG_LEVEL:-info}
-      - CAPTCHA_SOLVER=none
-      - TZ=${TZ:-Asia/Kolkata}
-    ports:
-      - "8291:8191"
-    restart: unless-stopped
 
   warp-proxy:
     image: ghcr.io/mon-ius/docker-warp-socks:v6
