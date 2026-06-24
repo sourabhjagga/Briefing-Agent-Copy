@@ -1,6 +1,6 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/api-client";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -10,6 +10,7 @@ import { useState } from "react";
 import { useToast } from "@/components/toast-provider";
 import { CardSkeleton, TableRowSkeleton } from "@/components/ui/skeleton";
 import { formatUptime, formatTimestamp } from "@/lib/utils";
+import Link from "next/link";
 interface HealthStatus {
   healthy: boolean;
   whatsapp: 'connected' | 'connecting';
@@ -30,9 +31,18 @@ interface ScraperHealth {
 export default function Dashboard() {
   const [searchTerm, setSearchTerm] = useState('');
   const { toast } = useToast();
+  const queryClient = useQueryClient();
 
-  const showExampleToast = () => {
-    toast('Dashboard refreshed successfully!', 'success');
+  const refreshDashboard = () => {
+    queryClient.invalidateQueries({ queryKey: ['health'] });
+    queryClient.invalidateQueries({ queryKey: ['scraper-health'] });
+    toast('Dashboard refreshed', 'success');
+  };
+
+  const triggerAllBriefs = () => {
+    apiRequest('/api/schedules/trigger', { method: 'POST', body: '{}' })
+      .then(() => toast('All briefs triggered', 'success'))
+      .catch((err: Error) => toast(err.message, 'error'));
   };
 
   const { data: health, isLoading: healthLoading } = useQuery<HealthStatus>({
@@ -53,7 +63,7 @@ export default function Dashboard() {
         <h1 className="text-2xl font-bold">Dashboard</h1>
         <div className="flex items-center gap-2">
           <Badge variant="outline">v1.0.0</Badge>
-          <Button variant="outline" size="sm">Refresh</Button>
+          <Button variant="outline" size="sm" onClick={refreshDashboard}>Refresh</Button>
         </div>
       </div>
 
@@ -131,9 +141,11 @@ export default function Dashboard() {
 
         <Card title="Quick Actions">
           <div className="flex flex-col gap-2">
-            <Button variant="default" size="sm" onClick={showExampleToast}>Trigger All Briefs</Button>
-            <Button variant="outline" size="sm">View Logs</Button>
-            <Button variant="ghost" size="sm">System Settings</Button>
+            <Button variant="default" size="sm" onClick={triggerAllBriefs}>Trigger All Briefs</Button>
+            <Link href="/settings">
+              <Button variant="outline" size="sm" className="w-full">System Settings</Button>
+            </Link>
+            <Button variant="ghost" size="sm" onClick={() => toast('View logs feature coming soon', 'info')}>View Logs</Button>
           </div>
         </Card>
       </div>

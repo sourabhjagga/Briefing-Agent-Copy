@@ -24,7 +24,7 @@ interface Schedule {
 
 interface Category {
   slug: string;
-  name: string;
+  display_name: string;
 }
 
 interface ScheduleForm {
@@ -55,7 +55,7 @@ export default function SchedulesPage() {
     queryFn: () => apiRequest<Category[]>('/api/categories'),
   });
 
-  const categoryOptions = categories?.map((c) => ({ value: c.slug, label: c.name })) || [];
+  const categoryOptions = categories?.map((c) => ({ value: c.slug, label: c.display_name })) || [];
 
   const invalidate = () => queryClient.invalidateQueries({ queryKey: ['schedules'] });
 

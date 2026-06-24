@@ -128,7 +128,7 @@ function startDashboardServer(database, whatsapp, telegramUser, scheduler, summa
 
   app.get('/health', (req, res) => {
     const waStatus = whatsapp.getStatus();
-    const msgCount = database.getTodayMessageCount('cc');
+    const msgCount = database.getTodayMessageCount('');
     res.json({
       healthy: true,
       whatsapp: waStatus.isReady ? 'connected' : 'connecting',
@@ -491,7 +491,7 @@ function startDashboardServer(database, whatsapp, telegramUser, scheduler, summa
     try {
       const { phoneNumber } = req.body;
       if (!phoneNumber) return res.status(400).json({ error: 'Missing phone number' });
-      await telegramUser.sendLoginCode(phoneNumber);
+      await telegramUser.sendCode(phoneNumber);
       res.json({ success: true });
     } catch (err) {
       res.status(500).json({ error: err.message });

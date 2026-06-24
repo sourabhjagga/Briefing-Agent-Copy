@@ -113,8 +113,15 @@ export default function WhatsAppPage() {
     }
   };
 
+  const addedSourceIds = new Set(sources.map((s) => s.source_id));
+
   const handleAddFromDiscover = (group: DiscoveredGroup) => {
-    setForm({ name: group.name, source_id: group.id, category_slug: "" });
+    setForm({ name: group.name, source_id: group.id, category_slug: categories[0]?.slug || "" });
+    setAddOpen(true);
+  };
+
+  const handleOpenAdd = () => {
+    setForm({ name: "", source_id: "", category_slug: categories[0]?.slug || "" });
     setAddOpen(true);
   };
 
@@ -124,16 +131,8 @@ export default function WhatsAppPage() {
   }));
 
   const sourceColumns: Column<WhatsAppSource>[] = [
-    { key: "id", header: "ID", sortable: true, className: "w-16" },
+    { key: "source_id", header: "Source ID / JID", sortable: true, render: (item) => <span className="font-mono text-xs">{item.source_id}</span> },
     { key: "name", header: "Name", sortable: true },
-    {
-      key: "source_id",
-      header: "Source ID",
-      sortable: true,
-      render: (item) => (
-        <span className="font-mono text-xs">{item.source_id}</span>
-      ),
-    },
     {
       key: "type",
       header: "Category",
@@ -173,6 +172,8 @@ export default function WhatsAppPage() {
     },
   ];
 
+  const isAdded = (groupId: string) => addedSourceIds.has(groupId);
+
   const groupColumns: Column<DiscoveredGroup>[] = [
     { key: "name", header: "Name", sortable: true },
     {
@@ -197,17 +198,20 @@ export default function WhatsAppPage() {
     {
       key: "id",
       header: "",
-      className: "w-20",
-      render: (item) => (
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => handleAddFromDiscover(item)}
-        >
-          <Plus className="h-3 w-3" />
-          Add
-        </Button>
-      ),
+      className: "w-24",
+      render: (item) =>
+        isAdded(item.id) ? (
+          <Badge variant="secondary">Added</Badge>
+        ) : (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => handleAddFromDiscover(item)}
+          >
+            <Plus className="h-3 w-3" />
+            Add
+          </Button>
+        ),
     },
   ];
 
@@ -220,7 +224,7 @@ export default function WhatsAppPage() {
       <Card title="WhatsApp Sources">
         <div className="mb-4 flex items-center justify-between">
           <div />
-          <Button onClick={() => setAddOpen(true)}>
+          <Button onClick={handleOpenAdd}>
             <Plus className="h-4 w-4" />
             Add Source
           </Button>

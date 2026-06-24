@@ -50,7 +50,7 @@ export function Dialog({ open, onClose, title, description, children, size = "md
     >
       <div
         className={cn(
-          "relative w-full rounded-lg border bg-surface p-6 shadow-lg",
+          "relative w-full rounded-lg border bg-surface p-6 shadow-lg max-h-[85vh] overflow-y-auto",
           sizeClasses[size]
         )}
       >

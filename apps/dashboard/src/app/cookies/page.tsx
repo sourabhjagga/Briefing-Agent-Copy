@@ -53,7 +53,7 @@ export default function CookiesPage() {
 
   const cookiesMap = new Map(cookies?.map((c) => [c.site, c]));
 
-  const invalidate = () => queryClient.invalidateQueries({ queryKey: ["cookies"] });
+  const invalidate = () => queryClient.invalidateQueries({ queryKey: ["cookies"], refetchType: "all" });
 
   const importMutation = useMutation({
     mutationFn: ({ site, cookies }: { site: string; cookies: string }) =>
