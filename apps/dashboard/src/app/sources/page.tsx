@@ -38,6 +38,14 @@ const SOURCE_TYPE_OPTIONS = [
   { value: "whatsapp", label: "WhatsApp" },
 ];
 
+const SOURCE_TYPE_VALUES = SOURCE_TYPE_OPTIONS.map(o => o.value);
+
+function displayType(type: string): string {
+  const parts = type.split('-');
+  const base = parts[parts.length - 1];
+  return SOURCE_TYPE_VALUES.includes(base) ? base : type;
+}
+
 const SOURCE_ID_PLACEHOLDERS: Record<string, string> = {
   forum: "e.g. hotukdeals (website name/slug)",
   deals: "e.g. desidime (website name/slug)",
@@ -191,14 +199,14 @@ export default function SourcesPage() {
           </div>
         ) : (
           <Badge
-            variant={item.type === "whatsapp" ? "info" : "secondary"}
+            variant={displayType(item.type) === "whatsapp" ? "info" : "secondary"}
             className="cursor-pointer"
             onClick={() => {
               setEditTypeId(item.id);
-              setEditTypeValue(item.type);
+              setEditTypeValue(displayType(item.type));
             }}
           >
-            {item.type}
+            {displayType(item.type)}
           </Badge>
         ),
     },
@@ -225,7 +233,7 @@ export default function SourcesPage() {
             size="sm"
             onClick={() => {
               setEditingSource(item);
-              setForm({ name: item.name, source_id: item.source_id, type: item.type, category_slug: item.category_slug || "" });
+              setForm({ name: item.name, source_id: item.source_id, type: displayType(item.type), category_slug: item.category_slug || "" });
               setEditOpen(true);
             }}
           >

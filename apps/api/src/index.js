@@ -159,7 +159,10 @@ function startDashboardServer(database, whatsapp, telegramUser, scheduler, summa
     try {
       const { name, source_id, type, category_slug } = req.body;
       if (!name || !source_id || !type) return res.status(400).json({ error: 'Missing fields' });
-      database.addSource(name, source_id.trim(), type, category_slug || null);
+      const effectiveType = category_slug && !type.startsWith(category_slug + '-')
+        ? `${category_slug}-${type}`
+        : type;
+      database.addSource(name, source_id.trim(), effectiveType, category_slug || null);
       res.json({ success: true });
     } catch (err) {
       res.status(500).json({ error: err.message });
@@ -188,7 +191,12 @@ function startDashboardServer(database, whatsapp, telegramUser, scheduler, summa
       if (name !== undefined || type !== undefined || category_slug !== undefined) {
         const source = database.getAllSources().find(s => s.id === id);
         if (source) {
-          database.updateSource(id, name || source.name, type || source.type, category_slug !== undefined ? category_slug : null);
+          const finalType = type || source.type;
+          const finalCategorySlug = category_slug !== undefined ? category_slug : source.category_slug;
+          const effectiveType = finalCategorySlug && !finalType.startsWith(finalCategorySlug + '-')
+            ? `${finalCategorySlug}-${finalType}`
+            : finalType;
+          database.updateSource(id, name || source.name, effectiveType, finalCategorySlug);
         }
       }
       res.json({ success: true });
@@ -793,8 +801,8 @@ async function main() {
 
   // Seed hardcoded scraper sources so they appear in the Sources dashboard
   const systemSources = [
-    { name: 'Technofino Forum', source_id: 'technofino', type: 'forum', category_slug: 'cc' },
-    { name: 'DesiDime Deals', source_id: 'desidime', type: 'deals', category_slug: 'deals' },
+    { name: 'Technofino Forum', source_id: 'technofino', type: 'cc-forum', category_slug: 'cc' },
+    { name: 'DesiDime Deals', source_id: 'desidime', type: 'deals-forum', category_slug: 'deals' },
     { name: 'Reddit (CC)', source_id: 'reddit', type: 'cc-reddit', category_slug: 'cc' },
   ];
   for (const src of systemSources) {
@@ -802,6 +810,15 @@ async function main() {
     if (!existing) {
       database.addSource(src.name, src.source_id, src.type, src.category_slug);
       logger.info(`🌱 Seeded scraper source: ${src.name} (${src.source_id})`);
+    }
+  }
+
+  // Migrate existing sources with bare types to prefixed types for consistency
+  for (const source of database.getAllSources()) {
+    if (source.category_slug && source.type && !source.type.startsWith(source.category_slug + '-')) {
+      const prefixedType = `${source.category_slug}-${source.type}`;
+      database.updateSource(source.id, source.name, prefixedType, source.category_slug);
+      logger.info(`🔧 Migrated source type: "${source.type}" → "${prefixedType}" for "${source.name}"`);
     }
   }
 
