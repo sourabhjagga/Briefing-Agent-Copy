@@ -484,7 +484,8 @@ function startDashboardServer(database, whatsapp, telegramUser, scheduler, summa
   });
 
   app.get('/api/telegram/status', (req, res) => {
-    res.json({ isReady: telegramUser.isReady, tempPhone: telegramUser.tempPhone });
+    const status = telegramUser.getStatus();
+    res.json({ isReady: status.isReady, tempPhone: status.tempPhone });
   });
 
   app.post('/api/telegram/send-code', async (req, res) => {
@@ -652,8 +653,10 @@ function startDashboardServer(database, whatsapp, telegramUser, scheduler, summa
         return res.status(400).json({ error: `Invalid site. Must be one of: ${VALID_SITES.join(', ')}` });
       }
       database.deleteCookies(site);
-      const targetPath = path.resolve(__dirname, `../data/${site}_cookies.json`);
-      if (fs.existsSync(targetPath)) fs.unlinkSync(targetPath);
+      [path.resolve(__dirname, `../data/${site}_cookies.json`),
+       path.resolve(__dirname, `../../data/${site}_cookies.json`)].forEach(p => {
+        if (fs.existsSync(p)) fs.unlinkSync(p);
+      });
       logger.info(`❌ Deleted cookies for ${site}.`);
       res.json({ success: true });
     } catch (err) {
@@ -689,15 +692,21 @@ function startDashboardServer(database, whatsapp, telegramUser, scheduler, summa
         return res.status(400).json({ error: 'Cookies must be a valid JSON array.' });
       }
       database.saveCookies(site, parsedCookies);
-      try {
-        const targetPath = path.resolve(__dirname, `../data/${site}_cookies.json`);
-        const dir = path.dirname(targetPath);
-        if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-        fs.writeFileSync(targetPath, JSON.stringify(parsedCookies, null, 2), 'utf8');
-      } catch (fileErr) {
-        logger.debug(`Could not write cookies to legacy file: ${fileErr.message}`);
+      // Write to both paths so scrapers and API both find the file
+      const cookiePaths = [
+        path.resolve(__dirname, `../data/${site}_cookies.json`),
+        path.resolve(__dirname, `../../data/${site}_cookies.json`),
+      ];
+      for (const targetPath of cookiePaths) {
+        try {
+          const dir = path.dirname(targetPath);
+          if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+          fs.writeFileSync(targetPath, JSON.stringify(parsedCookies, null, 2), 'utf8');
+        } catch (fileErr) {
+          logger.debug(`Could not write cookies to ${targetPath}: ${fileErr.message}`);
+        }
       }
-      logger.info(`🔐 Saved imported cookies for ${site} successfully in DB & file.`);
+      logger.info(`🔐 Saved imported cookies for ${site} successfully in DB & files.`);
       if (scrapers && scrapers[site]) {
         const fn = site === 'desidime'
           ? () => scrapers[site].scrapeDesiDime()
@@ -719,9 +728,13 @@ function startDashboardServer(database, whatsapp, telegramUser, scheduler, summa
         return res.status(400).json({ error: 'Invalid site name' });
       }
       database.deleteCookies(site);
-      const targetPath = path.resolve(__dirname, `../data/${site}_cookies.json`);
-      if (fs.existsSync(targetPath)) fs.unlinkSync(targetPath);
-      logger.info(`❌ Deleted session cookies for ${site} from DB & file.`);
+      // Delete from both API path (../data/) and scraper path (../../data/)
+      // to handle the path mismatch between src/index.js and src/scrapers/*.js
+      [path.resolve(__dirname, `../data/${site}_cookies.json`),
+       path.resolve(__dirname, `../../data/${site}_cookies.json`)].forEach(p => {
+        if (fs.existsSync(p)) fs.unlinkSync(p);
+      });
+      logger.info(`❌ Deleted session cookies for ${site} from DB & files.`);
       res.json({ success: true });
     } catch (err) {
       res.status(500).json({ error: err.message });
@@ -776,6 +789,20 @@ async function main() {
 
   const summarizer = new Summarizer(process.env.GEMINI_API_KEY, process.env.OPENROUTER_API_KEY);
   const botInstances = createBotInstances(database, summarizer);
+
+  // Seed hardcoded scraper sources so they appear in the Sources dashboard
+  const systemSources = [
+    { name: 'Technofino Forum', source_id: 'technofino', type: 'forum', category_slug: 'cc' },
+    { name: 'DesiDime Deals', source_id: 'desidime', type: 'deals', category_slug: 'deals' },
+    { name: 'Reddit', source_id: 'reddit', type: 'reddit', category_slug: null },
+  ];
+  for (const src of systemSources) {
+    const existing = database.getAllSources().find(s => s.source_id === src.source_id);
+    if (!existing) {
+      database.addSource(src.name, src.source_id, src.type, src.category_slug);
+      logger.info(`🌱 Seeded scraper source: ${src.name} (${src.source_id})`);
+    }
+  }
 
   const whatsapp = new WhatsAppListener(database, null);
   const telegramUser = new TelegramUserListener(database, null);
