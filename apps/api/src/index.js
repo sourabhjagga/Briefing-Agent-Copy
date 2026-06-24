@@ -156,9 +156,9 @@ function startDashboardServer(database, whatsapp, telegramUser, scheduler, summa
 
   app.post('/api/sources', (req, res) => {
     try {
-      const { name, source_id, type } = req.body;
+      const { name, source_id, type, category_slug } = req.body;
       if (!name || !source_id || !type) return res.status(400).json({ error: 'Missing fields' });
-      database.addSource(name, source_id.trim(), type);
+      database.addSource(name, source_id.trim(), type, category_slug || null);
       res.json({ success: true });
     } catch (err) {
       res.status(500).json({ error: err.message });
@@ -180,12 +180,15 @@ function startDashboardServer(database, whatsapp, telegramUser, scheduler, summa
     try {
       const id = parseIdParam(req.params.id);
       if (!id) return res.status(400).json({ error: 'Invalid ID' });
-      const { is_active, type } = req.body;
+      const { name, type, category_slug, is_active } = req.body;
       if (is_active !== undefined) {
         database.toggleSource(id, is_active);
       }
-      if (type !== undefined) {
-        database.updateSourceType(id, type);
+      if (name !== undefined || type !== undefined || category_slug !== undefined) {
+        const source = database.getAllSources().find(s => s.id === id);
+        if (source) {
+          database.updateSource(id, name || source.name, type || source.type, category_slug !== undefined ? category_slug : null);
+        }
       }
       res.json({ success: true });
     } catch (err) {
@@ -309,17 +312,42 @@ function startDashboardServer(database, whatsapp, telegramUser, scheduler, summa
       if (!id) return res.status(400).json({ error: 'Invalid ID' });
       const cat = database.getAllCategories().find(c => c.id === id);
       if (!cat) return res.status(404).json({ error: 'Category not found' });
-      if (!cat.bot_token || !cat.chat_id) {
-        return res.status(400).json({ error: 'Category must have a bot token and chat ID configured' });
+      const channel = (cat.delivery_channel || 'telegram').toLowerCase();
+      const results = [];
+      if (channel === 'telegram' || channel === 'both') {
+        if (!cat.bot_token || !cat.chat_id) {
+          results.push({ channel: 'telegram', success: false, error: 'Bot token or chat ID not configured' });
+        } else {
+          try {
+            const { Telegraf } = require('telegraf');
+            const testBot = new Telegraf(cat.bot_token);
+            await testBot.telegram.sendMessage(
+              cat.chat_id,
+              `🧪 <b>Test Message</b>\n\n✅ Category "${cat.display_name}" is configured correctly!\nBot token and Chat ID verified successfully.`,
+              { parse_mode: 'HTML' }
+            );
+            results.push({ channel: 'telegram', success: true });
+          } catch (e) {
+            results.push({ channel: 'telegram', success: false, error: e.message });
+          }
+        }
       }
-      const { Telegraf } = require('telegraf');
-      const testBot = new Telegraf(cat.bot_token);
-      await testBot.telegram.sendMessage(
-        cat.chat_id,
-        `🧪 <b>Test Message</b>\n\n✅ Category "${cat.display_name}" is configured correctly!\nBot token and Chat ID verified successfully.`,
-        { parse_mode: 'HTML' }
-      );
-      res.json({ success: true, message: 'Test message sent successfully!' });
+      if ((channel === 'whatsapp' || channel === 'both') && cat.whatsapp_delivery_jid) {
+        try {
+          if (whatsapp && whatsapp.isReady) {
+            await whatsapp.sendMessage(cat.whatsapp_delivery_jid, `🧪 Test Message\n\nCategory "${cat.display_name}" is configured correctly!\nWhatsApp delivery JID verified successfully.`);
+            results.push({ channel: 'whatsapp', success: true });
+          } else {
+            results.push({ channel: 'whatsapp', success: false, error: 'WhatsApp not connected' });
+          }
+        } catch (e) {
+          results.push({ channel: 'whatsapp', success: false, error: e.message });
+        }
+      } else if ((channel === 'whatsapp' || channel === 'both') && !cat.whatsapp_delivery_jid) {
+        results.push({ channel: 'whatsapp', success: false, error: 'WhatsApp delivery JID not configured' });
+      }
+      const allOk = results.every(r => r.success);
+      res.json({ success: allOk, results, message: allOk ? 'Test messages sent successfully!' : 'Some channels failed' });
     } catch (err) {
       res.status(500).json({ error: `Test failed: ${err.message}` });
     }
@@ -549,16 +577,33 @@ function startDashboardServer(database, whatsapp, telegramUser, scheduler, summa
         const filePath = path.resolve(__dirname, `../data/${site}_cookies.json`);
         const fileExists = fs.existsSync(filePath);
         let updatedAt = null;
+        let expiresAt = null;
         if (row) {
           try {
-            const meta = database.db.prepare('SELECT updated_at FROM cookies WHERE site = ?').get(site);
+            const meta = database.db.prepare('SELECT updated_at FROM cookies_store WHERE site = ?').get(site);
             updatedAt = meta ? meta.updated_at : null;
+          } catch (e) { /* ignore */ }
+          try {
+            const cookies = typeof row === 'string' ? JSON.parse(row) : row;
+            if (Array.isArray(cookies) && cookies.length > 0) {
+              const now = Math.floor(Date.now() / 1000);
+              let minExpiry = null;
+              let allSession = true;
+              for (const c of cookies) {
+                if (c.expires && c.expires > 0) {
+                  allSession = false;
+                  if (minExpiry === null || c.expires < minExpiry) minExpiry = c.expires;
+                }
+              }
+              expiresAt = allSession ? null : minExpiry;
+            }
           } catch (e) { /* ignore */ }
         } else if (fileExists) {
           const stat = fs.statSync(filePath);
           updatedAt = stat.mtime.toISOString();
         }
-        return { site, has_cookies: !!(row || fileExists), updated_at: updatedAt };
+        const isExpired = expiresAt ? Math.floor(Date.now() / 1000) > expiresAt : null;
+        return { site, has_cookies: !!(row || fileExists), updated_at: updatedAt, expires_at: expiresAt, is_valid: expiresAt ? !isExpired : (row || fileExists ? null : false) };
       });
       res.json(result);
     } catch (err) {

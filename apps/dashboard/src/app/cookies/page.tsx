@@ -21,6 +21,8 @@ interface CookieEntry {
   site: string;
   has_cookies: boolean;
   updated_at: string | null;
+  expires_at: number | null;
+  is_valid: boolean | null;
 }
 
 function formatDate(dateStr: string | null): string {
@@ -115,6 +117,36 @@ export default function CookiesPage() {
       ),
     },
     {
+      key: "expires_at",
+      header: "Expires",
+      sortable: true,
+      render: (c) => (
+        c.expires_at ? (
+          <span className={`text-sm ${c.is_valid === false ? "text-danger" : "text-success"}`}>{new Date(c.expires_at * 1000).toLocaleDateString()}</span>
+        ) : c.has_cookies ? (
+          <span className="text-sm text-warning">Session</span>
+        ) : (
+          <span className="text-sm text-muted-foreground">—</span>
+        )
+      ),
+    },
+    {
+      key: "is_valid",
+      header: "Status",
+      sortable: true,
+      render: (c) => (
+        c.is_valid === false ? (
+          <Badge variant="destructive">Expired</Badge>
+        ) : c.is_valid === true ? (
+          <Badge variant="success">Valid</Badge>
+        ) : c.has_cookies ? (
+          <Badge variant="info">Session</Badge>
+        ) : (
+          <Badge variant="secondary">Not Set</Badge>
+        )
+      ),
+    },
+    {
       key: "actions",
       header: "Actions",
       render: (c) => (
@@ -156,15 +188,31 @@ export default function CookiesPage() {
                       <span className="text-sm font-medium capitalize">
                         {site}
                       </span>
-                      <Badge
-                        variant={entry?.has_cookies ? "success" : "secondary"}
-                      >
-                        {entry?.has_cookies ? "Configured" : "Not Set"}
-                      </Badge>
+                      <div className="flex flex-col items-end gap-1">
+                        <Badge
+                          variant={entry?.has_cookies ? "success" : "secondary"}
+                        >
+                          {entry?.has_cookies ? "Configured" : "Not Set"}
+                        </Badge>
+                        {entry?.is_valid === false && (
+                          <Badge variant="destructive" className="text-xs">Expired</Badge>
+                        )}
+                        {entry?.is_valid === true && (
+                          <Badge variant="success" className="text-xs">Valid</Badge>
+                        )}
+                        {entry?.is_valid === null && entry?.has_cookies && (
+                          <Badge variant="info" className="text-xs">Session</Badge>
+                        )}
+                      </div>
                     </div>
                     <div className="text-xs text-muted-foreground">
                       Last Updated: {formatDate(entry?.updated_at ?? null)}
                     </div>
+                    {entry?.expires_at && (
+                      <div className="text-xs">
+                        Expires: {new Date(entry.expires_at * 1000).toLocaleDateString()}
+                      </div>
+                    )}
                     <div className="flex items-center gap-2 pt-1">
                       <Button
                         variant="outline"

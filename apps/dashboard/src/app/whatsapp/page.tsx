@@ -113,6 +113,11 @@ export default function WhatsAppPage() {
     }
   };
 
+  const handleAddFromDiscover = (group: DiscoveredGroup) => {
+    setForm({ name: group.name, source_id: group.id, category_slug: "" });
+    setAddOpen(true);
+  };
+
   const categoryOptions = categories.map((c) => ({
     value: c.slug,
     label: c.display_name,
@@ -189,6 +194,21 @@ export default function WhatsAppPage() {
           <span className="text-text-muted">&mdash;</span>
         ),
     },
+    {
+      key: "id",
+      header: "",
+      className: "w-20",
+      render: (item) => (
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => handleAddFromDiscover(item)}
+        >
+          <Plus className="h-3 w-3" />
+          Add
+        </Button>
+      ),
+    },
   ];
 
   return (
@@ -241,7 +261,7 @@ export default function WhatsAppPage() {
 
       <Dialog
         open={addOpen}
-        onClose={() => setAddOpen(false)}
+        onClose={() => { setAddOpen(false); setForm({ name: "", source_id: "", category_slug: "" }); }}
         title="Add WhatsApp Source"
         size="md"
       >
@@ -271,7 +291,7 @@ export default function WhatsAppPage() {
             />
           </div>
           <div className="flex justify-end gap-2 pt-2">
-            <Button variant="outline" onClick={() => setAddOpen(false)}>
+            <Button variant="outline" onClick={() => { setAddOpen(false); setForm({ name: "", source_id: "", category_slug: "" }); }}>
               Cancel
             </Button>
             <Button

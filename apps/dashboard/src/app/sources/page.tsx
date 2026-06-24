@@ -14,11 +14,19 @@ import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/components/toast-provider";
 import { Plus, Trash2 } from "lucide-react";
 
-interface Source extends Record<string, unknown> {
+interface Source {
   id: number;
   name: string;
   source_id: string;
   type: string;
+  is_active: boolean;
+  category_slug: string | null;
+}
+
+interface Category {
+  id: number;
+  slug: string;
+  display_name: string;
   is_active: boolean;
 }
 
@@ -30,6 +38,14 @@ const SOURCE_TYPE_OPTIONS = [
   { value: "whatsapp", label: "WhatsApp" },
 ];
 
+const SOURCE_ID_PLACEHOLDERS: Record<string, string> = {
+  forum: "e.g. hotukdeals (website name/slug)",
+  deals: "e.g. desidime (website name/slug)",
+  reddit: "e.g. wallstreetbets (subreddit name)",
+  youtube: "Channel ID or @handle",
+  whatsapp: "e.g. 120363xxx@g.us (WhatsApp JID)",
+};
+
 export default function SourcesPage() {
   const [addOpen, setAddOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
@@ -37,7 +53,7 @@ export default function SourcesPage() {
   const [editTypeId, setEditTypeId] = useState<number | null>(null);
   const [editTypeValue, setEditTypeValue] = useState("");
   const [deleteId, setDeleteId] = useState<number | null>(null);
-  const [form, setForm] = useState({ name: "", source_id: "", type: "forum" });
+  const [form, setForm] = useState({ name: "", source_id: "", type: "forum", category_slug: "" });
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
@@ -46,20 +62,25 @@ export default function SourcesPage() {
     queryFn: () => apiRequest<Source[]>("/api/sources"),
   });
 
+  const { data: categories = [] } = useQuery<Category[]>({
+    queryKey: ["categories"],
+    queryFn: () => apiRequest<Category[]>("/api/categories"),
+  });
+
   const createMutation = useMutation({
-    mutationFn: (body: typeof form) =>
+    mutationFn: (body: { name: string; source_id: string; type: string; category_slug?: string }) =>
       apiRequest("/api/sources", { method: "POST", body: JSON.stringify(body) }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["sources"] });
       setAddOpen(false);
-      setForm({ name: "", source_id: "", type: "forum" });
+      setForm({ name: "", source_id: "", type: "forum", category_slug: "" });
       toast("Source created", "success");
     },
     onError: (err: Error) => toast(err.message, "error"),
   });
 
   const updateMutation = useMutation({
-    mutationFn: ({ id, data }: { id: number; data: { name?: string; type?: string } }) =>
+    mutationFn: ({ id, data }: { id: number; data: { name?: string; type?: string; category_slug?: string | null } }) =>
       apiRequest(`/api/sources/${id}`, {
         method: "PATCH",
         body: JSON.stringify(data),
@@ -122,6 +143,21 @@ export default function SourcesPage() {
       render: (item) => (
         <span className="font-mono text-xs">{item.source_id}</span>
       ),
+    },
+    {
+      key: "category_slug",
+      header: "Category",
+      sortable: true,
+      render: (item) => {
+        const cat = categories.find(c => c.slug === item.category_slug);
+        return cat ? (
+          <Badge variant="secondary">{cat.display_name}</Badge>
+        ) : item.category_slug ? (
+          <Badge variant="secondary">{item.category_slug}</Badge>
+        ) : (
+          <span className="text-xs text-text-secondary">—</span>
+        );
+      },
     },
     {
       key: "type",
@@ -189,7 +225,7 @@ export default function SourcesPage() {
             size="sm"
             onClick={() => {
               setEditingSource(item);
-              setForm({ name: item.name, source_id: item.source_id, type: item.type });
+              setForm({ name: item.name, source_id: item.source_id, type: item.type, category_slug: item.category_slug || "" });
               setEditOpen(true);
             }}
           >
@@ -248,8 +284,15 @@ export default function SourcesPage() {
             <Input
               value={form.source_id}
               onChange={(e) => setForm({ ...form, source_id: e.target.value })}
-              placeholder="e.g. hotukdeals, wallstreetbets"
+              placeholder={SOURCE_ID_PLACEHOLDERS[form.type] || "Source ID"}
             />
+            <p className="mt-1 text-xs text-text-secondary">
+              {form.type === "forum" && "Website slug or name the scraper uses to identify this source"}
+              {form.type === "deals" && "Website slug or name the scraper uses to identify this source"}
+              {form.type === "reddit" && "Subreddit name without r/ prefix"}
+              {form.type === "youtube" && "YouTube channel ID or @handle for the scraper"}
+              {form.type === "whatsapp" && "WhatsApp group/channel JID (e.g. 120363xxx@g.us)"}
+            </p>
           </div>
           <div>
             <label className="mb-1 block text-sm font-medium">Type</label>
@@ -257,6 +300,17 @@ export default function SourcesPage() {
               value={form.type}
               onChange={(e) => setForm({ ...form, type: e.target.value })}
               options={SOURCE_TYPE_OPTIONS}
+            />
+          </div>
+          <div>
+            <label className="mb-1 block text-sm font-medium">Category</label>
+            <Select
+              value={form.category_slug}
+              onChange={(e) => setForm({ ...form, category_slug: e.target.value })}
+              options={[
+                { value: "", label: "None" },
+                ...categories.map(c => ({ value: c.slug, label: c.display_name })),
+              ]}
             />
           </div>
           <div className="flex justify-end gap-2 pt-2">
@@ -289,14 +343,6 @@ export default function SourcesPage() {
             />
           </div>
           <div>
-            <label className="mb-1 block text-sm font-medium">Source ID</label>
-            <Input
-              value={form.source_id}
-              onChange={(e) => setForm({ ...form, source_id: e.target.value })}
-              placeholder="e.g. hotukdeals, wallstreetbets"
-            />
-          </div>
-          <div>
             <label className="mb-1 block text-sm font-medium">Type</label>
             <Select
               value={form.type}
@@ -304,12 +350,23 @@ export default function SourcesPage() {
               options={SOURCE_TYPE_OPTIONS}
             />
           </div>
+          <div>
+            <label className="mb-1 block text-sm font-medium">Category</label>
+            <Select
+              value={form.category_slug}
+              onChange={(e) => setForm({ ...form, category_slug: e.target.value })}
+              options={[
+                { value: "", label: "None" },
+                ...categories.map(c => ({ value: c.slug, label: c.display_name })),
+              ]}
+            />
+          </div>
           <div className="flex justify-end gap-2 pt-2">
             <Button variant="outline" onClick={() => { setEditOpen(false); setEditingSource(null); }}>
               Cancel
             </Button>
             <Button
-              onClick={() => editingSource && updateMutation.mutate({ id: editingSource.id, data: { name: form.name, type: form.type } })}
+              onClick={() => editingSource && updateMutation.mutate({ id: editingSource.id, data: { name: form.name, type: form.type, category_slug: form.category_slug || null } })}
               disabled={!form.name || updateMutation.isPending}
             >
               {updateMutation.isPending ? "Saving..." : "Save"}

@@ -131,6 +131,12 @@ class DatabaseManager {
       this.db.exec(`ALTER TABLE categories ADD COLUMN whatsapp_delivery_jid TEXT`);
       logger.info('📊 Migrated: added whatsapp_delivery_jid column to categories');
     } catch (e) { /* already exists */ }
+
+    // Migrate: add category_slug column to sources for category assignment
+    try {
+      this.db.exec(`ALTER TABLE sources ADD COLUMN category_slug TEXT REFERENCES categories(slug)`);
+      logger.info('📊 Migrated: added category_slug column to sources');
+    } catch (e) { /* already exists */ }
   }
 
   /**
@@ -270,11 +276,12 @@ class DatabaseManager {
         LIMIT 1
       `),
       addSource: this.db.prepare(`
-        INSERT INTO sources (name, source_id, type, is_active)
-        VALUES (?, ?, ?, 1)
+        INSERT INTO sources (name, source_id, type, is_active, category_slug)
+        VALUES (?, ?, ?, 1, ?)
         ON CONFLICT(source_id) DO UPDATE SET 
           name=excluded.name, 
           type=excluded.type, 
+          category_slug=excluded.category_slug,
           is_active=1
       `),
       addSourceInactive: this.db.prepare(`
@@ -285,6 +292,7 @@ class DatabaseManager {
           type=excluded.type
       `),
       toggleSource: this.db.prepare(`UPDATE sources SET is_active = ? WHERE id = ?`),
+      updateSource: this.db.prepare(`UPDATE sources SET name = ?, type = ?, category_slug = ? WHERE id = ?`),
       updateSourceType: this.db.prepare(`UPDATE sources SET type = ? WHERE id = ?`),
       deleteSource: this.db.prepare(`DELETE FROM sources WHERE id = ?`),
       getAllCategories: this.db.prepare(`SELECT * FROM categories ORDER BY created_at ASC`),
@@ -435,9 +443,10 @@ class DatabaseManager {
     );
   }
 
-  addSource(name, sourceId, type) { this.statements.addSource.run(name, sourceId, type); }
+  addSource(name, sourceId, type, categorySlug = null) { this.statements.addSource.run(name, sourceId, type, categorySlug); }
   addSourceInactive(name, sourceId, type) { this.statements.addSourceInactive.run(name, sourceId, type); }
   toggleSource(id, isActive) { this.statements.toggleSource.run(isActive ? 1 : 0, id); }
+  updateSource(id, name, type, categorySlug = null) { this.statements.updateSource.run(name, type, categorySlug, id); }
   updateSourceType(id, type) { this.statements.updateSourceType.run(type, id); }
   deleteSource(id) { this.statements.deleteSource.run(id); }
   getAllCategories() { return this.statements.getAllCategories.all(); }
