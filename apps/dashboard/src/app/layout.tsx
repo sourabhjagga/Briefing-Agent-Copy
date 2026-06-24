@@ -12,6 +12,7 @@ import { ErrorBoundary } from "@/components/error-boundary";
 const navigation = [
   { name: "Dashboard", href: "/", icon: "📊" },
   { name: "Sources", href: "/sources", icon: "📡" },
+  { name: "Source Types", href: "/source-types", icon: "📋" },
   { name: "Categories", href: "/categories", icon: "🏷️" },
   { name: "Schedules", href: "/schedules", icon: "📅" },
   { name: "Telegram", href: "/telegram", icon: "📱" },

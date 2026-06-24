@@ -30,29 +30,16 @@ interface Category {
   is_active: boolean;
 }
 
-const SOURCE_TYPE_OPTIONS = [
-  { value: "forum", label: "Forum" },
-  { value: "deals", label: "Deals" },
-  { value: "reddit", label: "Reddit" },
-  { value: "youtube", label: "YouTube" },
-  { value: "whatsapp", label: "WhatsApp" },
-];
-
-const SOURCE_TYPE_VALUES = SOURCE_TYPE_OPTIONS.map(o => o.value);
-
-function displayType(type: string): string {
-  const parts = type.split('-');
-  const base = parts[parts.length - 1];
-  return SOURCE_TYPE_VALUES.includes(base) ? base : type;
+interface SourceType {
+  id: number;
+  slug: string;
+  display_name: string;
 }
 
-const SOURCE_ID_PLACEHOLDERS: Record<string, string> = {
-  forum: "e.g. hotukdeals (website name/slug)",
-  deals: "e.g. desidime (website name/slug)",
-  reddit: "e.g. wallstreetbets (subreddit name)",
-  youtube: "Channel ID or @handle",
-  whatsapp: "e.g. 120363xxx@g.us (WhatsApp JID)",
-};
+function displayType(type: string): string {
+  const idx = type.lastIndexOf('-');
+  return idx >= 0 ? type.slice(idx + 1) : type;
+}
 
 export default function SourcesPage() {
   const [addOpen, setAddOpen] = useState(false);
@@ -75,13 +62,28 @@ export default function SourcesPage() {
     queryFn: () => apiRequest<Category[]>("/api/categories"),
   });
 
+  const { data: sourceTypes = [] } = useQuery<SourceType[]>({
+    queryKey: ["source-types"],
+    queryFn: () => apiRequest<SourceType[]>("/api/source-types"),
+  });
+
+  const sourceTypeOptions = sourceTypes.map(st => ({
+    value: st.slug,
+    label: st.display_name,
+  }));
+
+  const sourceIdPlaceholders: Record<string, string> = {};
+  for (const st of sourceTypes) {
+    sourceIdPlaceholders[st.slug] = `e.g. enter ${st.display_name} source identifier`;
+  }
+
   const createMutation = useMutation({
     mutationFn: (body: { name: string; source_id: string; type: string; category_slug?: string }) =>
       apiRequest("/api/sources", { method: "POST", body: JSON.stringify(body) }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["sources"] });
       setAddOpen(false);
-      setForm({ name: "", source_id: "", type: "forum", category_slug: "" });
+      setForm({ name: "", source_id: "", type: sourceTypes[0]?.slug || "forums", category_slug: "" });
       toast("Source created", "success");
     },
     onError: (err: Error) => toast(err.message, "error"),
@@ -116,10 +118,10 @@ export default function SourcesPage() {
   });
 
   const updateTypeMutation = useMutation({
-    mutationFn: ({ id, type }: { id: number; type: string }) =>
+    mutationFn: ({ id, type, category_slug }: { id: number; type: string; category_slug?: string | null }) =>
       apiRequest(`/api/sources/${id}`, {
         method: "PATCH",
-        body: JSON.stringify({ type }),
+        body: JSON.stringify({ type, category_slug }),
       }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["sources"] });
@@ -177,14 +179,14 @@ export default function SourcesPage() {
             <Select
               value={editTypeValue}
               onChange={(e) => setEditTypeValue(e.target.value)}
-              options={SOURCE_TYPE_OPTIONS}
+              options={sourceTypeOptions}
               className="h-8 text-xs"
             />
             <Button
               size="sm"
               variant="ghost"
               onClick={() =>
-                updateTypeMutation.mutate({ id: item.id, type: editTypeValue })
+                updateTypeMutation.mutate({ id: item.id, type: editTypeValue, category_slug: item.category_slug })
               }
             >
               Save
@@ -292,14 +294,14 @@ export default function SourcesPage() {
             <Input
               value={form.source_id}
               onChange={(e) => setForm({ ...form, source_id: e.target.value })}
-              placeholder={SOURCE_ID_PLACEHOLDERS[form.type] || "Source ID"}
+              placeholder={sourceIdPlaceholders[form.type] || "Source ID"}
             />
             <p className="mt-1 text-xs text-text-secondary">
-              {form.type === "forum" && "Website slug or name the scraper uses to identify this source"}
-              {form.type === "deals" && "Website slug or name the scraper uses to identify this source"}
+              {form.type === "forums" && "Website slug or name the scraper uses to identify this source"}
               {form.type === "reddit" && "Subreddit name without r/ prefix"}
               {form.type === "youtube" && "YouTube channel ID or @handle for the scraper"}
               {form.type === "whatsapp" && "WhatsApp group/channel JID (e.g. 120363xxx@g.us)"}
+              {(form.type !== "forums" && form.type !== "reddit" && form.type !== "youtube" && form.type !== "whatsapp") && `Enter the ${sourceTypes.find(st => st.slug === form.type)?.display_name || form.type} source identifier`}
             </p>
           </div>
           <div>
@@ -307,7 +309,7 @@ export default function SourcesPage() {
             <Select
               value={form.type}
               onChange={(e) => setForm({ ...form, type: e.target.value })}
-              options={SOURCE_TYPE_OPTIONS}
+              options={sourceTypeOptions}
             />
           </div>
           <div>
@@ -355,7 +357,7 @@ export default function SourcesPage() {
             <Select
               value={form.type}
               onChange={(e) => setForm({ ...form, type: e.target.value })}
-              options={SOURCE_TYPE_OPTIONS}
+              options={sourceTypeOptions}
             />
           </div>
           <div>

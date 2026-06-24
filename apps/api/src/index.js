@@ -155,10 +155,14 @@ function startDashboardServer(database, whatsapp, telegramUser, scheduler, summa
     }
   });
 
+  const SINGLE_WORD = /^[a-z]+$/;
+
   app.post('/api/sources', (req, res) => {
     try {
       const { name, source_id, type, category_slug } = req.body;
       if (!name || !source_id || !type) return res.status(400).json({ error: 'Missing fields' });
+      if (!SINGLE_WORD.test(type)) return res.status(400).json({ error: 'Type must be a single lowercase word' });
+      if (category_slug && !SINGLE_WORD.test(category_slug)) return res.status(400).json({ error: 'Category must be a single lowercase word' });
       const effectiveType = category_slug && !type.startsWith(category_slug + '-')
         ? `${category_slug}-${type}`
         : type;
@@ -185,6 +189,8 @@ function startDashboardServer(database, whatsapp, telegramUser, scheduler, summa
       const id = parseIdParam(req.params.id);
       if (!id) return res.status(400).json({ error: 'Invalid ID' });
       const { name, type, category_slug, is_active } = req.body;
+      if (type && !SINGLE_WORD.test(type)) return res.status(400).json({ error: 'Type must be a single lowercase word' });
+      if (category_slug && !SINGLE_WORD.test(category_slug)) return res.status(400).json({ error: 'Category must be a single lowercase word' });
       if (is_active !== undefined) {
         database.toggleSource(id, is_active);
       }
@@ -361,6 +367,62 @@ function startDashboardServer(database, whatsapp, telegramUser, scheduler, summa
       res.status(500).json({ error: `Test failed: ${err.message}` });
     }
   });
+
+  // ── Source Types API ──────────────────────────────────────────────────────────
+
+  app.get('/api/source-types', (req, res) => {
+    try {
+      res.json(database.getAllSourceTypes());
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post('/api/source-types', (req, res) => {
+    try {
+      const { slug, display_name } = req.body;
+      if (!slug || !display_name) {
+        return res.status(400).json({ error: 'Missing slug or display_name' });
+      }
+      if (!/^[a-z]+$/.test(slug)) {
+        return res.status(400).json({ error: 'Slug must be a single lowercase word, no hyphens or numbers' });
+      }
+      const existing = database.getSourceTypeBySlug(slug);
+      if (existing) {
+        return res.status(409).json({ error: `Source type "${slug}" already exists` });
+      }
+      database.insertSourceType(slug, display_name);
+      res.json({ success: true });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.patch('/api/source-types/:id', (req, res) => {
+    try {
+      const id = parseIdParam(req.params.id);
+      if (!id) return res.status(400).json({ error: 'Invalid ID' });
+      const { display_name } = req.body;
+      if (!display_name) return res.status(400).json({ error: 'Missing display_name' });
+      database.updateSourceType(id, display_name);
+      res.json({ success: true });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.delete('/api/source-types/:id', (req, res) => {
+    try {
+      const id = parseIdParam(req.params.id);
+      if (!id) return res.status(400).json({ error: 'Invalid ID' });
+      database.deleteSourceType(id);
+      res.json({ success: true });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // ── Schedules API ─────────────────────────────────────────────────────────────
 
   app.get('/api/schedules', (req, res) => {
     try {

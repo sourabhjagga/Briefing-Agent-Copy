@@ -112,6 +112,13 @@ class DatabaseManager {
         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
       );
 
+      CREATE TABLE IF NOT EXISTS source_types (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        slug TEXT UNIQUE NOT NULL,
+        display_name TEXT NOT NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      );
+
       CREATE TABLE IF NOT EXISTS cookies_store (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         site TEXT UNIQUE NOT NULL,
@@ -338,6 +345,11 @@ class DatabaseManager {
           updated_at = CURRENT_TIMESTAMP
       `),
       getScraperHealth: this.db.prepare(`SELECT * FROM scraper_health ORDER BY updated_at DESC`),
+      getAllSourceTypes: this.db.prepare(`SELECT * FROM source_types ORDER BY created_at ASC`),
+      getSourceTypeBySlug: this.db.prepare(`SELECT * FROM source_types WHERE slug = ?`),
+      insertSourceType: this.db.prepare(`INSERT INTO source_types (slug, display_name) VALUES (?, ?) ON CONFLICT(slug) DO NOTHING`),
+      updateSourceType: this.db.prepare(`UPDATE source_types SET display_name = ? WHERE id = ?`),
+      deleteSourceType: this.db.prepare(`DELETE FROM source_types WHERE id = ?`),
       saveCookies: this.db.prepare(`
         INSERT INTO cookies_store (site, cookies_json) VALUES (?, ?)
         ON CONFLICT(site) DO UPDATE SET cookies_json = excluded.cookies_json, updated_at = CURRENT_TIMESTAMP
@@ -475,6 +487,39 @@ class DatabaseManager {
     return this.insertCategory(slug, displayName, botToken, chatId, aiPrompt, deliveryChannel, whatsappDeliveryJid);
   }
 
+  getAllSourceTypes() { return this.statements.getAllSourceTypes.all(); }
+  getSourceTypeBySlug(slug) { return this.statements.getSourceTypeBySlug.get(slug); }
+  insertSourceType(slug, displayName) { this.statements.insertSourceType.run(slug, displayName); }
+  updateSourceType(id, displayName) { this.statements.updateSourceType.run(displayName, id); }
+  deleteSourceType(id) { this.statements.deleteSourceType.run(id); }
+
+  seedDefaultSourceTypes() {
+    const defaults = [
+      { slug: 'forums', display_name: 'Forums' },
+      { slug: 'reddit', display_name: 'Reddit' },
+      { slug: 'youtube', display_name: 'YouTube' },
+      { slug: 'whatsapp', display_name: 'WhatsApp' },
+      { slug: 'telegram', display_name: 'Telegram' },
+    ];
+
+    let seeded = 0;
+    for (const st of defaults) {
+      try {
+        const existing = this.getSourceTypeBySlug(st.slug);
+        if (!existing) {
+          this.insertSourceType(st.slug, st.display_name);
+          seeded++;
+        }
+      } catch (err) {
+        logger.warn(`seedDefaultSourceTypes: could not seed "${st.slug}": ${err.message}`);
+      }
+    }
+
+    if (seeded > 0) {
+      logger.info(`🌱 Seeded ${seeded} default source type${seeded === 1 ? '' : 's'} (forums, reddit, youtube, whatsapp, telegram).`);
+    }
+  }
+
   getAllScheduleRules() { return this.statements.getAllScheduleRules.all(); }
   getScheduleRulesByCategory(slug) { return this.statements.getScheduleRulesByCategory.all(slug); }
   getScheduleRules(slug) { return this.getScheduleRulesByCategory(slug); }
@@ -575,6 +620,9 @@ class DatabaseManager {
 
     // Also seed default schedule rules if none exist yet
     this.seedDefaultSchedules();
+
+    // Seed default source types (forums, reddit, youtube, whatsapp, telegram)
+    this.seedDefaultSourceTypes();
   }
 
   getWhatsAppTargets(categorySlug) {
