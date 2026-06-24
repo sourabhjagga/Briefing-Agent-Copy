@@ -24,7 +24,7 @@ interface DataTableProps<T> {
   onRowClick?: (item: T) => void;
 }
 
-export function DataTable<T extends Record<string, unknown>>({
+export function DataTable<T>({
   columns,
   data,
   keyExtractor,
@@ -43,9 +43,9 @@ export function DataTable<T extends Record<string, unknown>>({
   const filtered = useMemo(() => {
     if (!search.trim()) return data;
     const lower = search.toLowerCase();
-    return data.filter((item) =>
+      return data.filter((item) =>
       columns.some((col) => {
-        const val = item[col.key];
+        const val = (item as Record<string, unknown>)[col.key];
         return val != null && String(val).toLowerCase().includes(lower);
       })
     );
@@ -54,8 +54,8 @@ export function DataTable<T extends Record<string, unknown>>({
   const sorted = useMemo(() => {
     if (!sortKey) return filtered;
     return [...filtered].sort((a, b) => {
-      const aVal = a[sortKey];
-      const bVal = b[sortKey];
+      const aVal = (a as Record<string, unknown>)[sortKey];
+      const bVal = (b as Record<string, unknown>)[sortKey];
       if (aVal == null) return 1;
       if (bVal == null) return -1;
       const cmp = aVal < bVal ? -1 : aVal > bVal ? 1 : 0;
@@ -150,7 +150,7 @@ export function DataTable<T extends Record<string, unknown>>({
                 >
                   {columns.map((col) => (
                     <td key={col.key} className={cn("px-4 py-3", col.className)}>
-                      {col.render ? col.render(item) : String(item[col.key] ?? "")}
+                      {col.render ? col.render(item) : String((item as Record<string, unknown>)[col.key] ?? "")}
                     </td>
                   ))}
                 </tr>
