@@ -48,7 +48,7 @@ export default function SourcesPage() {
   const [editTypeId, setEditTypeId] = useState<number | null>(null);
   const [editTypeValue, setEditTypeValue] = useState("");
   const [deleteId, setDeleteId] = useState<number | null>(null);
-  const [form, setForm] = useState({ name: "", source_id: "", type: "forum", category_slug: "" });
+  const [form, setForm] = useState({ name: "", source_id: "", type: "", category_slug: "" });
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
@@ -83,7 +83,7 @@ export default function SourcesPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["sources"] });
       setAddOpen(false);
-      setForm({ name: "", source_id: "", type: sourceTypes[0]?.slug || "forums", category_slug: "" });
+      setForm({ name: "", source_id: "", type: sourceTypes[0]?.slug || "", category_slug: categories[0]?.slug || "" });
       toast("Source created", "success");
     },
     onError: (err: Error) => toast(err.message, "error"),
@@ -257,7 +257,10 @@ export default function SourcesPage() {
     <div className="flex-1 space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold">Sources</h1>
-        <Button onClick={() => setAddOpen(true)}>
+        <Button onClick={() => {
+          setForm({ name: "", source_id: "", type: sourceTypes[0]?.slug || "", category_slug: categories[0]?.slug || "" });
+          setAddOpen(true);
+        }}>
           <Plus className="h-4 w-4" />
           Add Source
         </Button>
@@ -317,10 +320,7 @@ export default function SourcesPage() {
             <Select
               value={form.category_slug}
               onChange={(e) => setForm({ ...form, category_slug: e.target.value })}
-              options={[
-                { value: "", label: "None" },
-                ...categories.map(c => ({ value: c.slug, label: c.display_name })),
-              ]}
+              options={categories.map(c => ({ value: c.slug, label: c.display_name }))}
             />
           </div>
           <div className="flex justify-end gap-2 pt-2">
@@ -329,7 +329,7 @@ export default function SourcesPage() {
             </Button>
             <Button
               onClick={() => createMutation.mutate(form)}
-              disabled={!form.name || !form.source_id || createMutation.isPending}
+              disabled={!form.name || !form.source_id || !form.type || !form.category_slug || createMutation.isPending}
             >
               {createMutation.isPending ? "Creating..." : "Create"}
             </Button>
@@ -365,10 +365,7 @@ export default function SourcesPage() {
             <Select
               value={form.category_slug}
               onChange={(e) => setForm({ ...form, category_slug: e.target.value })}
-              options={[
-                { value: "", label: "None" },
-                ...categories.map(c => ({ value: c.slug, label: c.display_name })),
-              ]}
+              options={categories.map(c => ({ value: c.slug, label: c.display_name }))}
             />
           </div>
           <div className="flex justify-end gap-2 pt-2">
@@ -376,8 +373,8 @@ export default function SourcesPage() {
               Cancel
             </Button>
             <Button
-              onClick={() => editingSource && updateMutation.mutate({ id: editingSource.id, data: { name: form.name, type: form.type, category_slug: form.category_slug || null } })}
-              disabled={!form.name || updateMutation.isPending}
+              onClick={() => editingSource && updateMutation.mutate({ id: editingSource.id, data: { name: form.name, type: form.type, category_slug: form.category_slug } })}
+              disabled={!form.name || !form.type || !form.category_slug || updateMutation.isPending}
             >
               {updateMutation.isPending ? "Saving..." : "Save"}
             </Button>

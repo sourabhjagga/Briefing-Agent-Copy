@@ -160,13 +160,11 @@ function startDashboardServer(database, whatsapp, telegramUser, scheduler, summa
   app.post('/api/sources', (req, res) => {
     try {
       const { name, source_id, type, category_slug } = req.body;
-      if (!name || !source_id || !type) return res.status(400).json({ error: 'Missing fields' });
+      if (!name || !source_id || !type || !category_slug) return res.status(400).json({ error: 'Missing fields (name, source_id, type, category_slug required)' });
       if (!SINGLE_WORD.test(type)) return res.status(400).json({ error: 'Type must be a single lowercase word' });
-      if (category_slug && !SINGLE_WORD.test(category_slug)) return res.status(400).json({ error: 'Category must be a single lowercase word' });
-      const effectiveType = category_slug && !type.startsWith(category_slug + '-')
-        ? `${category_slug}-${type}`
-        : type;
-      database.addSource(name, source_id.trim(), effectiveType, category_slug || null);
+      if (!SINGLE_WORD.test(category_slug)) return res.status(400).json({ error: 'Category must be a single lowercase word' });
+      const effectiveType = `${category_slug}-${type}`;
+      database.addSource(name, source_id.trim(), effectiveType, category_slug);
       res.json({ success: true });
     } catch (err) {
       res.status(500).json({ error: err.message });
