@@ -14,7 +14,7 @@ COPY apps/dashboard ./apps/dashboard
 RUN npm run build --prefix apps/dashboard
 
 COPY apps/api ./apps/api
-RUN cp -r apps/dashboard/out apps/api/public
+RUN rm -rf apps/api/public && mv apps/dashboard/out apps/api/public
 
 RUN npm run build --prefix apps/api
 
