@@ -682,6 +682,22 @@ function startDashboardServer(database, whatsapp, telegramUser, scheduler, summa
     }
   });
 
+  // Serve Next.js static export HTML routes
+  // e.g. /sources -> sources.html, /categories -> categories.html
+  app.get('*', (req, res) => {
+    if (req.path.startsWith('/api/')) {
+      return res.status(404).json({ error: 'API route not found' });
+    }
+    const publicDir = path.join(__dirname, '../public');
+    const htmlPath = path.join(publicDir, req.path.endsWith('.html') ? req.path : req.path + '.html');
+    const indexPath = path.join(publicDir, 'index.html');
+    if (fs.existsSync(htmlPath)) {
+      res.sendFile(htmlPath);
+    } else {
+      res.sendFile(indexPath);
+    }
+  });
+
   const server = app.listen(PORT, () => {
     logger.info(`🌐 Dashboard Server successfully started on port ${PORT} — http://localhost:${PORT}`);
   });
