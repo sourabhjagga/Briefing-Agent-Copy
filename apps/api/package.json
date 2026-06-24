@@ -6,7 +6,7 @@
   "scripts": {
     "start": "node src/index.js",
     "dev": "node src/index.js",
-    "build": "esbuild public/app.js --bundle --minify --global-name=BriefingApp --outfile=public/app.min.js"
+    "build": "echo 'No build needed - Next.js static export served directly'"
   },
   "keywords": [
     "credit-cards",
@@ -20,9 +20,7 @@
   ],
   "author": "Sourabh Jagga",
   "license": "MIT",
-  "devDependencies": {
-    "esbuild": "^0.20.2"
-  },
+  "devDependencies": {},
   "dependencies": {
     "@google/generative-ai": "^0.11.0",
     "@whiskeysockets/baileys": "^6.7.18",
