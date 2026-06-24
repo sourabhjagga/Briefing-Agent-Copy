@@ -33,6 +33,19 @@ interface ScheduleForm {
   label: string;
 }
 
+function timeToCron(hours: number, minutes: number): string {
+  return `${minutes} ${hours} * * *`;
+}
+
+function cronToTime(cron: string): { hours: number; minutes: number } | null {
+  const parts = cron.trim().split(/\s+/);
+  if (parts.length < 2) return null;
+  const min = parseInt(parts[0], 10);
+  const hr = parseInt(parts[1], 10);
+  if (isNaN(min) || isNaN(hr)) return null;
+  return { hours: hr, minutes: min };
+}
+
 const emptyForm: ScheduleForm = { category_slug: "", cron_expression: "", label: "" };
 
 export default function SchedulesPage() {
@@ -249,6 +262,24 @@ export default function SchedulesPage() {
             />
           </div>
           <div className="space-y-2">
+            <label className="text-sm font-medium">Time</label>
+            <input
+              type="time"
+              value={
+                cronToTime(form.cron_expression)
+                  ? `${String(cronToTime(form.cron_expression)!.hours).padStart(2, '0')}:${String(cronToTime(form.cron_expression)!.minutes).padStart(2, '0')}`
+                  : ''
+              }
+              onChange={(e) => {
+                if (!e.target.value) return;
+                const [hr, min] = e.target.value.split(':').map(Number);
+                setForm((p) => ({ ...p, cron_expression: timeToCron(hr, min) }));
+              }}
+              className="h-10 w-full rounded-md border border-border bg-surface px-3 py-2 text-sm"
+            />
+            <p className="text-xs text-text-muted">Or enter a custom cron expression below</p>
+          </div>
+          <div className="space-y-2">
             <label className="text-sm font-medium">Cron Expression</label>
             <Input
               placeholder="e.g. 0 8 * * *"
@@ -291,6 +322,24 @@ export default function SchedulesPage() {
               onChange={(e) => setForm((p) => ({ ...p, category_slug: e.target.value }))}
               required
             />
+          </div>
+          <div className="space-y-2">
+            <label className="text-sm font-medium">Time</label>
+            <input
+              type="time"
+              value={
+                cronToTime(form.cron_expression)
+                  ? `${String(cronToTime(form.cron_expression)!.hours).padStart(2, '0')}:${String(cronToTime(form.cron_expression)!.minutes).padStart(2, '0')}`
+                  : ''
+              }
+              onChange={(e) => {
+                if (!e.target.value) return;
+                const [hr, min] = e.target.value.split(':').map(Number);
+                setForm((p) => ({ ...p, cron_expression: timeToCron(hr, min) }));
+              }}
+              className="h-10 w-full rounded-md border border-border bg-surface px-3 py-2 text-sm"
+            />
+            <p className="text-xs text-text-muted">Or enter a custom cron expression below</p>
           </div>
           <div className="space-y-2">
             <label className="text-sm font-medium">Cron Expression</label>

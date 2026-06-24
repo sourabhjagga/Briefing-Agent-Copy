@@ -502,7 +502,7 @@ function startDashboardServer(database, whatsapp, telegramUser, scheduler, summa
     try {
       const { code, password } = req.body;
       if (!code) return res.status(400).json({ error: 'Missing OTP code' });
-      await telegramUser.submitLoginCode(code, password);
+      await telegramUser.submitCode(code, password);
       res.json({ success: true });
     } catch (err) {
       res.status(500).json({ error: err.message });
@@ -552,7 +552,7 @@ function startDashboardServer(database, whatsapp, telegramUser, scheduler, summa
         return res.status(400).json({ error: 'Missing name, source_id, or category_slug' });
       }
       const type = `${category_slug}-whatsapp`;
-      database.addSource(name, source_id.trim(), type);
+      database.addSource(name, source_id.trim(), type, category_slug);
       res.json({ success: true });
     } catch (err) {
       res.status(500).json({ error: err.message });

@@ -50,6 +50,7 @@ export default function WhatsAppPage() {
   const { data: sources = [], isLoading: sourcesLoading } = useQuery<WhatsAppSource[]>({
     queryKey: ["whatsapp-sources"],
     queryFn: () => apiRequest<WhatsAppSource[]>("/api/whatsapp/sources"),
+    staleTime: 0,
   });
 
   const { data: categories = [] } = useQuery<Category[]>({
@@ -71,6 +72,7 @@ export default function WhatsAppPage() {
       }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["whatsapp-sources"] });
+      queryClient.invalidateQueries({ queryKey: ["whatsapp-discover"] });
       queryClient.invalidateQueries({ queryKey: ["sources"] });
       setAddOpen(false);
       setForm({ name: "", source_id: "", category_slug: "" });
