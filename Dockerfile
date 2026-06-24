@@ -1,41 +1,26 @@
-# ─── STAGE 1: BUILDER ───────────────────────────────────────────────────
-# Pinned to specific digest for reproducible builds (node:20 Debian Bookworm)
 FROM node:20@sha256:8f693eaa7e0a8e71560c9a82b55fd54c2ae920a2ba5d2cde28bac7d1c01c9ba5 AS builder
 
-WORKDIR /app
-
-# Skip chromium download in builder stage — system Chromium is used at runtime
 ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
 
-# Copy package descriptors
-COPY package*.json ./
+WORKDIR /app/apps/api
 
-# Install dependencies
-# --foreground-scripts ensures native addon postinstall scripts run correctly as root
+COPY apps/api/package.json ./
+
 RUN npm install --foreground-scripts
 
-# Copy source files and static assets
-COPY src/ ./src
-COPY public/ /app/public
+COPY apps/api ./
 
-# Build the frontend assets
 RUN npm run build
 
-# ─── STAGE 2: RUNTIME ───────────────────────────────────────────────────
-# Pinned to specific digest for reproducible builds (node:20-slim Debian Bookworm)
 FROM node:20-slim@sha256:2cf067cfed83d5ea958367df9f966191a942351a2df77d6f0193e162b5febfc0 AS runner
 
 WORKDIR /app
 
-# Set production environment variables
-# PUPPETEER_* must be set before any RUN step to prevent Chromium auto-download
 ENV NODE_ENV=production \
     PORT=3000 \
     PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true \
     PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
 
-# Install Chromium and system dependencies for Puppeteer + yt-dlp + ffmpeg
-# libasound2 was renamed to libasound2t64 in Debian Bookworm; install whichever is available
 RUN apt-get update && \
     apt-get install -y \
         chromium \
@@ -60,28 +45,20 @@ RUN apt-get update && \
     pip3 install yt-dlp --break-system-packages && \
     rm -rf /var/lib/apt/lists/* /root/.cache/pip
 
-# Create a non-root user for security
 RUN groupadd -r agentsg && useradd -r -m -g agentsg agentuser
 
-# Copy built artifacts from builder stage
-COPY --from=builder /app/node_modules ./node_modules
-COPY --from=builder /app/package.json ./package.json
-COPY --from=builder /app/src/ ./src
-COPY --from=builder /app/public/ ./public
+COPY --from=builder /app/apps/api/node_modules ./node_modules
+COPY --from=builder /app/apps/api/package.json ./package.json
+COPY --from=builder /app/apps/api/src ./src
+COPY --from=builder /app/apps/api/public ./public
 
-# Create writable data directories and set ownership only on those dirs
-# Avoids slow chown -R over thousands of node_modules files
 RUN mkdir -p data logs && \
     chown -R agentuser:agentsg /app/data /app/logs
 
-# Declare persistent volumes so data survives container restarts
 VOLUME ["/app/data", "/app/logs"]
 
-# Switch to non-root user for execution
 USER agentuser
 
-# Expose HTTP dashboard port
 EXPOSE 3000
 
-# Start the application
-CMD ["npm", "start"]
+CMD ["node", "src/index.js"]
