@@ -43,7 +43,10 @@ class RedditScraper {
   async scrape() {
     const allSources = this.database.getAllSources();
     const activeReddit = allSources.filter(s => s.is_active === 1 && (s.type === 'cc-reddit' || s.type === 'deals-reddit'));
-    if (activeReddit.length === 0) return;
+    if (activeReddit.length === 0) {
+      logger.warn('⚠️ No active Reddit sources with type cc-reddit or deals-reddit. Add one in Sources dashboard.');
+      return;
+    }
 
     logger.info(`🔍 Starting Reddit scrape session for ${activeReddit.length} subreddits...`);
 

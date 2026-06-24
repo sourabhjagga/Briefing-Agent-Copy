@@ -234,7 +234,7 @@ class TelegramUserListener {
             title: d.title,
             username: d.entity?.username || null,
             type: d.isChannel ? 'channel' : 'group',
-            participantsCount: d.entity?.participantsCount || 0,
+            participantCount: d.entity?.participantsCount || 0,
           });
         }
       }

@@ -367,17 +367,23 @@ class DatabaseManager {
   }
 
   getTodayMessages(sourcePrefix) {
-    const startOfDay = Math.floor(new Date().setHours(0, 0, 0, 0) / 1000);
+    const now = Date.now();
+    const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
+    const startOfDay = Math.floor((Math.floor((now + IST_OFFSET_MS) / 86400000) * 86400000 - IST_OFFSET_MS) / 1000);
     return this.statements.getTodayMessages.all(`${sourcePrefix}%`, startOfDay);
   }
 
   getTodayMessageCount(sourcePrefix) {
-    const startOfDay = Math.floor(new Date().setHours(0, 0, 0, 0) / 1000);
+    const now = Date.now();
+    const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
+    const startOfDay = Math.floor((Math.floor((now + IST_OFFSET_MS) / 86400000) * 86400000 - IST_OFFSET_MS) / 1000);
     return this.statements.getTodayMessageCount.get(`${sourcePrefix}%`, startOfDay).count;
   }
 
   getTodayActiveGroups(sourcePrefix) {
-    const startOfDay = Math.floor(new Date().setHours(0, 0, 0, 0) / 1000);
+    const now = Date.now();
+    const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
+    const startOfDay = Math.floor((Math.floor((now + IST_OFFSET_MS) / 86400000) * 86400000 - IST_OFFSET_MS) / 1000);
     return this.statements.getTodayActiveGroups.all(`${sourcePrefix}%`, startOfDay);
   }
 

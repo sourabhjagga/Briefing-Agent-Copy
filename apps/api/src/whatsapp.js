@@ -263,11 +263,10 @@ class WhatsAppListener {
   async _processIncomingMessage(msg) {
     const remoteJid = (msg.key.remoteJid || '').toLowerCase();
     
-    // Strict target filter checking JID in cached set
-    if (!this.targetIds.has(remoteJid)) return;
-
-    // Refresh target set periodically to keep DB in sync dynamically
+    // Refresh target set first to catch newly added sources
     this._refreshTargets();
+
+    // Strict target filter checking JID in cached set
     if (!this.targetIds.has(remoteJid)) return;
 
     const chatName = this.chatNameMap[remoteJid] || msg.pushName || remoteJid.split('@')[0];

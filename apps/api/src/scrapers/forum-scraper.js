@@ -136,7 +136,11 @@ class ForumScraper {
         }
       });
 
-      logger.info(`✅ Found ${items.length} threads in Technofino: "${target.name}"`);
+      if (items.length === 0) {
+        logger.warn(`⚠️ Found 0 threads in Technofino: "${target.name}" — site may be blocking or no new content.`);
+      } else {
+        logger.info(`✅ Found ${items.length} threads in Technofino: "${target.name}"`);
+      }
 
       // Judge session health by VIP Lounge results
       if (target.isPrivate) {

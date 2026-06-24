@@ -521,7 +521,7 @@ function startDashboardServer(database, whatsapp, telegramUser, scheduler, summa
 
   app.get('/api/telegram/discover', async (req, res) => {
     try {
-      const channels = await telegramUser.listAllSubscribedChannels();
+      const channels = await telegramUser.discoverGroups();
       res.json(channels);
     } catch (err) {
       res.status(500).json({ error: err.message });
@@ -554,6 +554,7 @@ function startDashboardServer(database, whatsapp, telegramUser, scheduler, summa
       }
       const type = `${category_slug}-whatsapp`;
       database.addSource(name, source_id.trim(), type, category_slug);
+      whatsapp._refreshTargets();
       res.json({ success: true });
     } catch (err) {
       res.status(500).json({ error: err.message });
@@ -794,7 +795,7 @@ async function main() {
   const systemSources = [
     { name: 'Technofino Forum', source_id: 'technofino', type: 'forum', category_slug: 'cc' },
     { name: 'DesiDime Deals', source_id: 'desidime', type: 'deals', category_slug: 'deals' },
-    { name: 'Reddit', source_id: 'reddit', type: 'reddit', category_slug: null },
+    { name: 'Reddit (CC)', source_id: 'reddit', type: 'cc-reddit', category_slug: 'cc' },
   ];
   for (const src of systemSources) {
     const existing = database.getAllSources().find(s => s.source_id === src.source_id);
