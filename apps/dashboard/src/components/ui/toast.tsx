@@ -18,10 +18,10 @@ const Toast = React.forwardRef<HTMLDivElement, ToastProps>(
     };
 
     const styles = {
-      success: "bg-green-50 border-green-200 text-green-800",
-      error: "bg-red-50 border-red-200 text-red-800",
-      warning: "bg-yellow-50 border-yellow-200 text-yellow-800",
-      info: "bg-blue-50 border-blue-200 text-blue-800",
+      success: "bg-success/10 border-success/20 text-success",
+      error: "bg-destructive/10 border-destructive/20 text-destructive",
+      warning: "bg-warning/10 border-warning/20 text-warning",
+      info: "bg-accent/10 border-accent/20 text-accent",
     };
 
     return (
@@ -37,7 +37,7 @@ const Toast = React.forwardRef<HTMLDivElement, ToastProps>(
         <span className="text-sm font-medium">{message}</span>
         <button
           onClick={onClose}
-          className="ml-2 text-gray-500 hover:text-gray-700"
+          className="ml-2 text-text-muted hover:text-text-primary"
         >
           ×
         </button>

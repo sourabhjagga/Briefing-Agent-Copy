@@ -40,6 +40,8 @@ export default function SchedulesPage() {
   const { toast } = useToast();
   const [addOpen, setAddOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deletingSchedule, setDeletingSchedule] = useState<Schedule | null>(null);
   const [editing, setEditing] = useState<Schedule | null>(null);
   const [form, setForm] = useState<ScheduleForm>(emptyForm);
 
@@ -127,9 +129,15 @@ export default function SchedulesPage() {
   };
 
   const handleDelete = (schedule: Schedule) => {
-    if (window.confirm(`Delete schedule "${schedule.label}"?`)) {
-      deleteMutation.mutate(schedule.id);
-    }
+    setDeletingSchedule(schedule);
+    setDeleteOpen(true);
+  };
+
+  const confirmDelete = () => {
+    if (!deletingSchedule) return;
+    deleteMutation.mutate(deletingSchedule.id);
+    setDeleteOpen(false);
+    setDeletingSchedule(null);
   };
 
   const columns: Column<Schedule>[] = [
@@ -298,6 +306,27 @@ export default function SchedulesPage() {
             <Button type="submit" disabled={updateMutation.isPending}>Save</Button>
           </div>
         </form>
+      </Dialog>
+
+      <Dialog
+        open={deleteOpen}
+        onClose={() => { setDeleteOpen(false); setDeletingSchedule(null); }}
+        title="Delete Schedule"
+        size="sm"
+      >
+        <div className="space-y-4">
+          <p className="text-sm text-text-secondary">
+            Delete schedule "{deletingSchedule?.label}"? This action cannot be undone.
+          </p>
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" onClick={() => { setDeleteOpen(false); setDeletingSchedule(null); }}>
+              Cancel
+            </Button>
+            <Button variant="destructive" onClick={confirmDelete} disabled={deleteMutation.isPending}>
+              {deleteMutation.isPending ? "Deleting..." : "Delete"}
+            </Button>
+          </div>
+        </div>
       </Dialog>
     </div>
   );

@@ -32,6 +32,8 @@ const SOURCE_TYPE_OPTIONS = [
 
 export default function SourcesPage() {
   const [addOpen, setAddOpen] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
+  const [editingSource, setEditingSource] = useState<Source | null>(null);
   const [editTypeId, setEditTypeId] = useState<number | null>(null);
   const [editTypeValue, setEditTypeValue] = useState("");
   const [deleteId, setDeleteId] = useState<number | null>(null);
@@ -52,6 +54,21 @@ export default function SourcesPage() {
       setAddOpen(false);
       setForm({ name: "", source_id: "", type: "forum" });
       toast("Source created", "success");
+    },
+    onError: (err: Error) => toast(err.message, "error"),
+  });
+
+  const updateMutation = useMutation({
+    mutationFn: ({ id, data }: { id: number; data: { name?: string; type?: string } }) =>
+      apiRequest(`/api/sources/${id}`, {
+        method: "PATCH",
+        body: JSON.stringify(data),
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["sources"] });
+      setEditOpen(false);
+      setEditingSource(null);
+      toast("Source updated", "success");
     },
     onError: (err: Error) => toast(err.message, "error"),
   });
@@ -164,18 +181,28 @@ export default function SourcesPage() {
     {
       key: "id",
       header: "",
-      className: "w-12",
+      className: "w-24",
       render: (item) => (
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={(e) => {
-            e.stopPropagation();
-            setDeleteId(item.id);
-          }}
-        >
-          <Trash2 className="h-4 w-4 text-danger" />
-        </Button>
+        <div className="flex items-center gap-1">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => {
+              setEditingSource(item);
+              setForm({ name: item.name, source_id: item.source_id, type: item.type });
+              setEditOpen(true);
+            }}
+          >
+            Edit
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setDeleteId(item.id)}
+          >
+            <Trash2 className="h-4 w-4 text-danger" />
+          </Button>
+        </div>
       ),
     },
   ];
@@ -241,6 +268,51 @@ export default function SourcesPage() {
               disabled={!form.name || !form.source_id || createMutation.isPending}
             >
               {createMutation.isPending ? "Creating..." : "Create"}
+            </Button>
+          </div>
+        </div>
+      </Dialog>
+
+      <Dialog
+        open={editOpen}
+        onClose={() => { setEditOpen(false); setEditingSource(null); }}
+        title="Edit Source"
+        size="md"
+      >
+        <div className="space-y-4">
+          <div>
+            <label className="mb-1 block text-sm font-medium">Name</label>
+            <Input
+              value={form.name}
+              onChange={(e) => setForm({ ...form, name: e.target.value })}
+              placeholder="Source name"
+            />
+          </div>
+          <div>
+            <label className="mb-1 block text-sm font-medium">Source ID</label>
+            <Input
+              value={form.source_id}
+              onChange={(e) => setForm({ ...form, source_id: e.target.value })}
+              placeholder="e.g. hotukdeals, wallstreetbets"
+            />
+          </div>
+          <div>
+            <label className="mb-1 block text-sm font-medium">Type</label>
+            <Select
+              value={form.type}
+              onChange={(e) => setForm({ ...form, type: e.target.value })}
+              options={SOURCE_TYPE_OPTIONS}
+            />
+          </div>
+          <div className="flex justify-end gap-2 pt-2">
+            <Button variant="outline" onClick={() => { setEditOpen(false); setEditingSource(null); }}>
+              Cancel
+            </Button>
+            <Button
+              onClick={() => editingSource && updateMutation.mutate({ id: editingSource.id, data: { name: form.name, type: form.type } })}
+              disabled={!form.name || updateMutation.isPending}
+            >
+              {updateMutation.isPending ? "Saving..." : "Save"}
             </Button>
           </div>
         </div>

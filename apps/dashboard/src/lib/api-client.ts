@@ -32,9 +32,4 @@ export async function apiRequest<T>(
   return response.json();
 }
 
-export function useApiQuery<T>(url: string, queryKey: string[]) {
-  return {
-    queryKey,
-    queryFn: () => apiRequest<T>(url),
-  };
-}
+

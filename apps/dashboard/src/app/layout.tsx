@@ -6,6 +6,7 @@ import { Menu, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import RootLayout from "@/root-layout";
 import { ThemeToggle } from "@/components/theme-toggle";
+import { ErrorBoundary } from "@/components/error-boundary";
 
 const navigation = [
   { name: "Dashboard", href: "/", icon: "📊" },
@@ -29,7 +30,6 @@ export default function DashboardLayout({
   return (
     <RootLayout>
       <div className="flex h-screen bg-background">
-        {/* Mobile sidebar backdrop */}
         {sidebarOpen && (
           <div
             className="fixed inset-0 z-40 bg-black bg-opacity-50 lg:hidden"
@@ -37,7 +37,6 @@ export default function DashboardLayout({
           />
         )}
 
-        {/* Sidebar */}
         <aside
           className={cn(
             "fixed inset-y-0 left-0 z-50 w-64 transform bg-card border-r transition-transform duration-300 ease-in-out lg:translate-x-0 lg:static lg:w-64",
@@ -45,7 +44,6 @@ export default function DashboardLayout({
           )}
         >
           <div className="flex h-full flex-col">
-            {/* Header */}
             <div className="flex h-14 items-center gap-2 border-b px-4">
               <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary text-primary-foreground">
                 <span className="text-sm font-bold">B</span>
@@ -56,7 +54,6 @@ export default function DashboardLayout({
               </div>
             </div>
 
-            {/* Navigation */}
             <nav className="flex-1 overflow-y-auto px-2 py-4">
               <ul className="space-y-1">
                 {navigation.map((item) => (
@@ -80,7 +77,6 @@ export default function DashboardLayout({
               </ul>
             </nav>
 
-            {/* Footer */}
             <div className="border-t p-4">
               <div className="flex items-center gap-3">
                 <div className="h-8 w-8 rounded-full bg-muted" />
@@ -94,9 +90,7 @@ export default function DashboardLayout({
           </div>
         </aside>
 
-        {/* Main content */}
         <main className="flex flex-1 flex-col overflow-hidden lg:ml-0">
-          {/* Mobile header */}
           <header className="flex h-14 items-center gap-4 border-b bg-card px-4 lg:hidden">
             <button
               onClick={() => setSidebarOpen(true)}
@@ -110,10 +104,11 @@ export default function DashboardLayout({
             </div>
           </header>
 
-          {/* Content area */}
           <div className="flex-1 overflow-y-auto p-4 lg:p-6">
             <Suspense fallback={<div className="animate-pulse h-96 rounded-lg bg-surface-2" />}>
-              {children}
+              <ErrorBoundary>
+                {children}
+              </ErrorBoundary>
             </Suspense>
           </div>
         </main>

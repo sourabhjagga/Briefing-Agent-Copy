@@ -146,6 +146,8 @@ export default function CategoriesPage() {
   const { toast } = useToast();
   const [addOpen, setAddOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deletingCategory, setDeletingCategory] = useState<Category | null>(null);
   const [editingCategory, setEditingCategory] = useState<Category | null>(null);
   const [form, setForm] = useState<FormState>(defaultForm);
 
@@ -264,13 +266,15 @@ export default function CategoriesPage() {
   };
 
   const handleDelete = (cat: Category) => {
-    const isBuiltIn = BUILT_IN_SLUGS.includes(cat.slug);
-    const msg = isBuiltIn
-      ? `"${cat.slug}" is a built-in category. Deleting it may cause unexpected behavior. Are you sure?`
-      : `Delete category "${cat.display_name}"? This action cannot be undone.`;
-    if (window.confirm(msg)) {
-      deleteMutation.mutate(cat.id);
-    }
+    setDeletingCategory(cat);
+    setDeleteOpen(true);
+  };
+
+  const confirmDelete = () => {
+    if (!deletingCategory) return;
+    deleteMutation.mutate(deletingCategory.id);
+    setDeleteOpen(false);
+    setDeletingCategory(null);
   };
 
   const handleEditSubmit = () => {
@@ -412,6 +416,29 @@ export default function CategoriesPage() {
           >
             {updateMutation.isPending ? "Saving..." : "Save"}
           </Button>
+        </div>
+      </Dialog>
+
+      <Dialog
+        open={deleteOpen}
+        onClose={() => { setDeleteOpen(false); setDeletingCategory(null); }}
+        title="Delete Category"
+        size="sm"
+      >
+        <div className="space-y-4">
+          <p className="text-sm text-text-secondary">
+            {deletingCategory && BUILT_IN_SLUGS.includes(deletingCategory.slug)
+              ? `"${deletingCategory.slug}" is a built-in category. Deleting it may cause unexpected behavior. Are you sure?`
+              : `Delete category "${deletingCategory?.display_name}"? This action cannot be undone.`}
+          </p>
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" onClick={() => { setDeleteOpen(false); setDeletingCategory(null); }}>
+              Cancel
+            </Button>
+            <Button variant="destructive" onClick={confirmDelete} disabled={deleteMutation.isPending}>
+              {deleteMutation.isPending ? "Deleting..." : "Delete"}
+            </Button>
+          </div>
         </div>
       </Dialog>
     </div>
