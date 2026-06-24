@@ -196,11 +196,21 @@ class YoutubeScraper {
         '--output', outputPath
       ];
 
-      // Optionally attach cookies file for age-restricted / bot-challenged videos
-      const cookiePath = path.resolve(__dirname, '../../data/youtube_cookies.txt');
-      if (fs.existsSync(cookiePath)) {
+      // Export YouTube cookies from database to Netscape-format temp file for yt-dlp
+      const cookiePath = path.resolve(__dirname, `../../data/yt_cookies_${videoId}.txt`);
+      const ytCookies = this.database.getCookies('youtube');
+      if (ytCookies && Array.isArray(ytCookies) && ytCookies.length > 0) {
+        const netscapeLines = ytCookies.map((c) => {
+          const domain = c.domain || '.youtube.com';
+          const domainFlag = domain.startsWith('.') ? 'TRUE' : 'FALSE';
+          const p = c.path || '/';
+          const secure = c.secure ? 'TRUE' : 'FALSE';
+          const expires = c.expirationDate || Math.floor(Date.now() / 1000) + 86400 * 365;
+          return `${domain}\t${domainFlag}\t${p}\t${secure}\t${expires}\t${c.name}\t${c.value}`;
+        });
+        fs.writeFileSync(cookiePath, `# Netscape HTTP Cookie File\n${netscapeLines.join('\n')}\n`);
         ytdlpArgs.push('--cookies', cookiePath);
-        logger.debug('🍪 Attaching youtube_cookies.txt to yt-dlp for authenticated download.');
+        logger.debug(`🍪 Exported ${ytCookies.length} YouTube cookies from DB to yt-dlp.`);
       }
 
       // Run yt-dlp as a child process
@@ -268,13 +278,21 @@ Provide a complete, long text explanation (~500 words) of the video content.`;
         throw new Error(`Both yt-dlp and Google Search Grounding failed: ${groundingErr.message}`);
       }
     } finally {
-      // Always cleanup temporary audio file to maintain zero disk footprint
+      // Always cleanup temporary audio and cookie files to maintain zero disk footprint
       if (fs.existsSync(outputPath)) {
         try {
           fs.unlinkSync(outputPath);
           logger.debug(`🧹 Cleaned up temporary audio file: ${outputPath}`);
         } catch (e) {
           logger.debug(`Could not clean up temp file ${outputPath}: ${e.message}`);
+        }
+      }
+      if (fs.existsSync(cookiePath)) {
+        try {
+          fs.unlinkSync(cookiePath);
+          logger.debug(`🧹 Cleaned up temporary cookie file: ${cookiePath}`);
+        } catch (e) {
+          logger.debug(`Could not clean up temp cookie file ${cookiePath}: ${e.message}`);
         }
       }
     }

@@ -11,13 +11,31 @@ const logger = require('./logger');
 const OPENROUTER_TIMEOUT = parseInt(process.env.OPENROUTER_TIMEOUT || '120000', 10);
 
 // Define a central, easily swappable fallback registry
+// Gemini models sourced from Google's current model catalog (verified June 2026).
+// OpenRouter models are free-tier only; cross-referenced against OpenRouter API as of June 2026.
+// Order: highest capability first, progressively lighter fallbacks.
 const FALLBACK_MODELS = [
+  // ---- Gemini (Google AI Studio) ----
   { provider: 'gemini', id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash (Primary)' },
-  { provider: 'gemini', id: 'gemini-2.0-flash', name: 'Gemini 2.0 Flash (Secondary)' },
-  { provider: 'gemini', id: 'gemini-2.5-flash-lite', name: 'Gemini 2.5 Flash Lite (High Quota)' },
-  { provider: 'openrouter', id: 'nvidia/llama-3.1-nemotron-ultra-253b-v1:free', name: 'OpenRouter (Nemotron Ultra 253B)' },
-  { provider: 'openrouter', id: 'deepseek/deepseek-r1-0528:free', name: 'OpenRouter (DeepSeek R1)' },
-  { provider: 'openrouter', id: 'meta-llama/llama-4-maverick:free', name: 'OpenRouter (Llama 4 Maverick)' }
+  { provider: 'gemini', id: 'gemini-3.5-flash', name: 'Gemini 3.5 Flash (Frontier)' },
+  { provider: 'gemini', id: 'gemini-3.1-flash-lite', name: 'Gemini 3.1 Flash Lite (Fastest)' },
+  { provider: 'gemini', id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro (Reasoning)' },
+  { provider: 'gemini', id: 'gemini-2.5-flash-lite', name: 'Gemini 2.5 Flash Lite (Budget)' },
+  { provider: 'gemini', id: 'gemini-3.1-pro-preview', name: 'Gemini 3.1 Pro Preview' },
+
+  // ---- OpenRouter Free Tier ----
+  { provider: 'openrouter', id: 'nousresearch/hermes-3-llama-3.1-405b:free', name: 'OR: Hermes 3 405B' },
+  { provider: 'openrouter', id: 'nvidia/nemotron-3-ultra-550b-a55b:free', name: 'OR: Nemotron Ultra 550B' },
+  { provider: 'openrouter', id: 'nvidia/nemotron-3-super-120b-a12b:free', name: 'OR: Nemotron Super 120B' },
+  { provider: 'openrouter', id: 'meta-llama/llama-3.3-70b-instruct:free', name: 'OR: Llama 3.3 70B' },
+  { provider: 'openrouter', id: 'qwen/qwen3-coder:free', name: 'OR: Qwen 3 Coder' },
+  { provider: 'openrouter', id: 'google/gemma-4-31b-it:free', name: 'OR: Gemma 4 31B' },
+  { provider: 'openrouter', id: 'nvidia/nemotron-3-nano-30b-a3b:free', name: 'OR: Nemotron Nano 30B' },
+  { provider: 'openrouter', id: 'qwen/qwen3-next-80b-a3b-instruct:free', name: 'OR: Qwen 3 Next 80B' },
+  { provider: 'openrouter', id: 'openai/gpt-oss-120b:free', name: 'OR: GPT-OSS 120B' },
+  { provider: 'openrouter', id: 'nvidia/nemotron-nano-9b-v2:free', name: 'OR: Nemotron Nano 9B' },
+  { provider: 'openrouter', id: 'google/gemma-4-26b-a4b-it:free', name: 'OR: Gemma 4 26B' },
+  { provider: 'openrouter', id: 'cohere/north-mini-code:free', name: 'OR: Cohere North Mini' }
 ];
 
 class Summarizer {

@@ -7,9 +7,11 @@ import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Select } from "@/components/ui/select";
 import { Dialog } from "@/components/ui/dialog";
 import { DataTable, type Column } from "@/components/data-table";
 import { useToast } from "@/components/toast-provider";
+import { Plus } from "lucide-react";
 
 interface TelegramStatus {
   isReady: boolean;
@@ -23,6 +25,18 @@ interface TelegramChannel {
   participantCount?: number;
 }
 
+interface Category {
+  id: number;
+  slug: string;
+  display_name: string;
+}
+
+interface SourceType {
+  id: number;
+  slug: string;
+  display_name: string;
+}
+
 export default function TelegramPage() {
   const [loginOpen, setLoginOpen] = useState(false);
   const [phoneNumber, setPhoneNumber] = useState("");
@@ -31,6 +45,9 @@ export default function TelegramPage() {
   const [codeSent, setCodeSent] = useState(false);
   const [channels, setChannels] = useState<TelegramChannel[] | null>(null);
   const [discoverOpen, setDiscoverOpen] = useState(false);
+  const [addSourceOpen, setAddSourceOpen] = useState(false);
+  const [addSourceChannel, setAddSourceChannel] = useState<TelegramChannel | null>(null);
+  const [addSourceForm, setAddSourceForm] = useState({ name: "", source_id: "", category_slug: "" });
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
@@ -67,6 +84,28 @@ export default function TelegramPage() {
       setCode("");
       setPassword("");
       toast("Logged in successfully", "success");
+    },
+    onError: (err: Error) => toast(err.message, "error"),
+  });
+
+  const { data: categories = [] } = useQuery<Category[]>({
+    queryKey: ["categories"],
+    queryFn: () => apiRequest<Category[]>("/api/categories"),
+  });
+
+  const { data: sourceTypes = [] } = useQuery<SourceType[]>({
+    queryKey: ["source-types"],
+    queryFn: () => apiRequest<SourceType[]>("/api/source-types"),
+  });
+
+  const createSourceMutation = useMutation({
+    mutationFn: (body: { name: string; source_id: string; type: string; category_slug?: string }) =>
+      apiRequest("/api/sources", { method: "POST", body: JSON.stringify(body) }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["sources"] });
+      setAddSourceOpen(false);
+      setAddSourceChannel(null);
+      toast("Source added", "success");
     },
     onError: (err: Error) => toast(err.message, "error"),
   });
@@ -113,11 +152,23 @@ export default function TelegramPage() {
     submitCodeMutation.mutate(body);
   };
 
+  const telegramTypeSlug = sourceTypes.find(
+    (st) => st.slug === "telegram" || st.display_name.toLowerCase() === "telegram"
+  )?.slug || "telegram";
+
   const columns: Column<TelegramChannel>[] = [
     {
       key: "title",
       header: "Title",
       sortable: true,
+    },
+    {
+      key: "id",
+      header: "ID",
+      sortable: true,
+      render: (ch) => (
+        <span className="font-mono text-xs">{ch.id}</span>
+      ),
     },
     {
       key: "username",
@@ -140,6 +191,25 @@ export default function TelegramPage() {
         ) : (
           <span className="text-text-muted">&mdash;</span>
         ),
+    },
+    {
+      key: "id",
+      header: "",
+      className: "w-28",
+      render: (ch) => (
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => {
+            setAddSourceChannel(ch);
+            setAddSourceForm({ name: ch.title, source_id: ch.id, category_slug: categories[0]?.slug || "" });
+            setAddSourceOpen(true);
+          }}
+        >
+          <Plus className="mr-1 h-3 w-3" />
+          Add to Source
+        </Button>
+      ),
     },
   ];
 
@@ -282,6 +352,66 @@ export default function TelegramPage() {
             </div>
           </div>
         )}
+      </Dialog>
+
+      <Dialog
+        open={addSourceOpen}
+        onClose={() => { setAddSourceOpen(false); setAddSourceChannel(null); }}
+        title="Add Telegram Channel as Source"
+        description={addSourceChannel ? `Add "${addSourceChannel.title}" to your monitored sources` : ""}
+        size="md"
+      >
+        <div className="space-y-4">
+          <div>
+            <label className="mb-1 block text-sm font-medium">Name</label>
+            <Input
+              value={addSourceForm.name}
+              onChange={(e) => setAddSourceForm({ ...addSourceForm, name: e.target.value })}
+              placeholder="Source name"
+            />
+          </div>
+          <div>
+            <label className="mb-1 block text-sm font-medium">Channel ID</label>
+            <Input
+              value={addSourceForm.source_id}
+              onChange={(e) => setAddSourceForm({ ...addSourceForm, source_id: e.target.value })}
+              placeholder="Channel ID"
+            />
+            <p className="mt-1 text-xs text-text-secondary">
+              Telegram channel identifier used by the scraper
+            </p>
+          </div>
+          <div>
+            <label className="mb-1 block text-sm font-medium">Type</label>
+            <Input value="telegram" disabled className="text-text-muted" />
+          </div>
+          <div>
+            <label className="mb-1 block text-sm font-medium">Category</label>
+            <Select
+              value={addSourceForm.category_slug}
+              onChange={(e) => setAddSourceForm({ ...addSourceForm, category_slug: e.target.value })}
+              options={categories.map((c) => ({ value: c.slug, label: c.display_name }))}
+            />
+          </div>
+          <div className="flex justify-end gap-2 pt-2">
+            <Button variant="outline" onClick={() => { setAddSourceOpen(false); setAddSourceChannel(null); }}>
+              Cancel
+            </Button>
+            <Button
+              onClick={() =>
+                createSourceMutation.mutate({
+                  name: addSourceForm.name,
+                  source_id: addSourceForm.source_id,
+                  type: telegramTypeSlug,
+                  category_slug: addSourceForm.category_slug,
+                })
+              }
+              disabled={!addSourceForm.name || !addSourceForm.source_id || !addSourceForm.category_slug || createSourceMutation.isPending}
+            >
+              {createSourceMutation.isPending ? "Adding..." : "Add Source"}
+            </Button>
+          </div>
+        </div>
       </Dialog>
     </div>
   );

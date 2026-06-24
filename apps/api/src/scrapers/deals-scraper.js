@@ -59,7 +59,7 @@ class DealsScraper {
 
       // 4. Stagger and wait for content/selectors to settle
       // Use a broad selector that covers DesiDime's current and legacy DOM layouts
-      const PRIMARY_SELECTOR = 'li.post-unit, article.deal-card, .deal-item, .post-card, .thread-item, div[class*="deal"]';
+      const PRIMARY_SELECTOR = 'li.post-unit, article.deal-card, .deal-item, .post-card, .thread-item, .topic-item, .discussion-item, div[class*="deal"], div[class*="post"], div[class*="topic"], li[class*="post"], li[class*="topic"]';
       try {
         await page.waitForSelector(`${PRIMARY_SELECTOR}, a[href*="/deals/"]`, { timeout: 15000 });
       } catch (e) {
@@ -81,15 +81,15 @@ class DealsScraper {
         const row = $(el);
         // Title link — try multiple class patterns
         const titleEl = row.find(
-          '.post-unit__title a, a.post-link, .deal-card__title a, .deal-item__title a, h2 a, h3 a, .title a'
+          '.post-unit__title a, a.post-link, .deal-card__title a, .deal-item__title a, .topic-title a, .discussion-title a, h2 a, h3 a, .title a'
         ).first();
         // Description / merchant
         const descEl = row.find(
-          '.post-unit__merchant-link, .post-unit__description, .deal-card__merchant, .deal-description'
+          '.post-unit__merchant-link, .post-unit__description, .deal-card__merchant, .deal-description, .topic-merchant, .discussion-merchant'
         ).first();
         // Price / discount
         const priceEl = row.find(
-          '.post-unit__price, .deal-price, .discount, .deal-card__price, [class*="price"], [class*="discount"]'
+          '.post-unit__price, .deal-price, .discount, .deal-card__price, .topic-price, .discussion-price, [class*="price"], [class*="discount"]'
         ).first();
 
         let link = titleEl.attr('href') || '';
