@@ -83,8 +83,8 @@ export default function Dashboard() {
     total: rows.length,
     healthy: rows.filter(r => r.error_count === 0).length,
     totalErrors: rows.reduce((sum, r) => sum + r.error_count, 0),
-    lastSuccess: rows.reduce((latest, r) => r.last_success > latest ? r.last_success : latest, ''),
-    lastAttempt: rows.reduce((latest, r) => r.last_attempt > latest ? r.last_attempt : latest, ''),
+    lastSuccess: rows.reduce((latest, r) => Math.max(latest, r.last_success), 0),
+    lastAttempt: rows.reduce((latest, r) => Math.max(latest, r.last_attempt), 0),
   }));
 
   const formatTimeAgo = formatTimestamp;
