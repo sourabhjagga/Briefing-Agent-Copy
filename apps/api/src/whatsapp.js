@@ -356,20 +356,6 @@ class WhatsAppListener {
       } catch (newsErr) {
         logger.warn(`Could not sync newsletters: ${newsErr.message}`);
       }
-
-      for (const targetId of this.targetIds) {
-        if (!this.database.db.prepare('SELECT 1 FROM messages WHERE LOWER(group_id) = ? LIMIT 1').get(targetId)) {
-          logger.info(`⏳ Retroactively requesting history: ${targetId}`);
-          try {
-            const history = await this.sock.fetchMessagesFromJid(targetId, { limit: 2 });
-            for (const histMsg of history || []) {
-              if (histMsg.message) await this._processIncomingMessage(histMsg);
-            }
-          } catch (fetchErr) {
-            logger.debug(`Could not pull history for ${targetId}: ${fetchErr.message}`);
-          }
-        }
-      }
     } catch (err) {
       logger.error(`WhatsApp group discovery failed: ${err.message}`);
     }

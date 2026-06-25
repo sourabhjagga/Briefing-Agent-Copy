@@ -143,8 +143,8 @@ class YoutubeScraper {
           chatType: 'channel',
           senderName: source.name,
           senderNumber: '',
-          body: `🎥 <b>YouTube Video Summary</b>\n📌 <b>Title:</b> ${video.title}\n\n${summary}\n\n🔗 <b>Watch:</b> https://youtu.be/${video.id}`,
-          timestamp: Math.floor(video.published.getTime() / 1000),
+          body: `🎥 <b>YouTube Video Summary</b>\n📌 <b>Title:</b> ${video.title}\n📅 <b>Published:</b> ${video.published.toISOString().split('T')[0]}\n\n${summary}\n\n🔗 <b>Watch:</b> https://youtu.be/${video.id}`,
+          timestamp: Math.floor(Date.now() / 1000),
           hasMedia: false,
           mediaCaption: '',
           isForwarded: false,
@@ -176,6 +176,7 @@ class YoutubeScraper {
       fs.mkdirSync(tempDir, { recursive: true });
     }
     const outputPath = path.join(tempDir, `${videoId}.m4a`);
+    let cookiePath = null;
 
     try {
       logger.info(`📥 [yt-dlp] Downloading lowest-quality audio for video ${videoId}...`);
@@ -195,7 +196,7 @@ class YoutubeScraper {
       ];
 
       // Export YouTube cookies from database to Netscape-format temp file for yt-dlp
-      const cookiePath = path.resolve(__dirname, `../../data/yt_cookies_${videoId}.txt`);
+      cookiePath = path.resolve(__dirname, `../../data/yt_cookies_${videoId}.txt`);
       const ytCookies = this.database.getCookies('youtube');
       if (ytCookies && Array.isArray(ytCookies) && ytCookies.length > 0) {
         const netscapeLines = ytCookies.map((c) => {

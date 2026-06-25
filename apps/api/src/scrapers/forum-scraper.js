@@ -9,6 +9,7 @@
  */
 
 const cheerio = require('cheerio');
+const axios = require('axios');
 const fs = require('fs');
 const path = require('path');
 const logger = require('../logger');
@@ -137,7 +138,48 @@ class ForumScraper {
       });
 
       if (items.length === 0) {
-        logger.warn(`⚠️ Found 0 threads in Technofino: "${target.name}" — site may be blocking or no new content.`);
+        logger.warn(`⚠️ Found 0 threads in Technofino: "${target.name}" via DOM — attempting RSS fallback.`);
+        try {
+          const rssUrl = target.url.endsWith('/') ? `${target.url}index.rss` : `${target.url}/index.rss`;
+          
+          let cookieString = '';
+          const cookiesArray = this.database.getCookies('technofino');
+          if (cookiesArray && Array.isArray(cookiesArray)) {
+            cookieString = cookiesArray.map(c => `${c.name}=${c.value}`).join('; ');
+          }
+
+          const response = await axios.get(rssUrl, {
+            headers: {
+              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+              'Cookie': cookieString
+            },
+            timeout: 10000
+          });
+
+          const $rss = cheerio.load(response.data, { xmlMode: true });
+          $rss('item').each((i, el) => {
+            const item = $rss(el);
+            const title = item.children('title').text();
+            let link = item.children('link').text();
+            const author = item.children('dc\\:creator').text() || 'Forum User';
+            const pubDate = item.children('pubDate').text();
+
+            if (link && !link.startsWith('http')) link = 'https://technofino.in' + link;
+            const idMatch = link.match(/\.(\d+)\/?$/);
+            const uniqueId = idMatch ? idMatch[1] : Math.random().toString(36).slice(2);
+
+            items.push({
+              id: `forum_${uniqueId}`,
+              title: title.trim(),
+              author: author.trim(),
+              link: link,
+              datetime: pubDate
+            });
+          });
+          logger.info(`✅ RSS Fallback succeeded. Found ${items.length} threads in "${target.name}".`);
+        } catch (rssErr) {
+          logger.error(`❌ RSS Fallback failed for "${target.name}": ${rssErr.message}`);
+        }
       } else {
         logger.info(`✅ Found ${items.length} threads in Technofino: "${target.name}"`);
       }
