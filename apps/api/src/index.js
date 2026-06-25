@@ -24,9 +24,7 @@ const TelegramBotDispatcher = require('./telegram-bot');
 const Summarizer = require('./summarizer');
 const Scheduler = require('./scheduler');
 
-const ForumScraper = require('./scrapers/forum-scraper');
-const DealsScraper = require('./scrapers/deals-scraper');
-const RedditScraper = require('./scrapers/reddit-scraper');
+const WebScraper = require('./scrapers/web-scraper');
 const YoutubeScraper = require('./scrapers/youtube-scraper');
 
 function validateConfig() {
@@ -996,15 +994,11 @@ async function main() {
     }, 5000);
   };
 
-  const forumScraper = new ForumScraper(database, sendSystemAlert);
-  const dealsScraper = new DealsScraper(database, sendSystemAlert);
-  const redditScraper = new RedditScraper(database, sendSystemAlert);
+  const webScraper = new WebScraper(database, sendSystemAlert);
   const youtubeScraper = new YoutubeScraper(database, summarizer);
 
   const scrapers = {
-    reddit: redditScraper,
-    technofino: forumScraper,
-    desidime: dealsScraper,
+    web: webScraper,
     youtube: youtubeScraper,
   };
 
@@ -1027,9 +1021,7 @@ async function main() {
   telegramUser.start().catch(err => logger.error(`Telegram user listener failed: ${err.message}`));
   scheduler.start();
 
-  forumScraper.start();
-  dealsScraper.start();
-  redditScraper.start();
+  webScraper.start();
   youtubeScraper.start();
 
   for (const [slug, bot] of botInstances) {
@@ -1049,9 +1041,7 @@ async function main() {
   const shutdown = async (signal) => {
     logger.info(`\n${signal} signal received. Powering down gracefully...`);
     scheduler.stop();
-    forumScraper.stop();
-    dealsScraper.stop();
-    redditScraper.stop();
+    webScraper.stop();
     youtubeScraper.stop();
     await whatsapp.stop();
     await telegramUser.logout();
