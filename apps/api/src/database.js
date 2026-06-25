@@ -125,7 +125,23 @@ class DatabaseManager {
         cookies_json TEXT NOT NULL,
         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
       );
+
+      CREATE TABLE IF NOT EXISTS source_instances (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        source_fk INTEGER NOT NULL REFERENCES sources(id) ON DELETE SET NULL,
+        instance_type TEXT NOT NULL,
+        group_id TEXT NOT NULL,
+        group_name TEXT NOT NULL,
+        chat_type TEXT DEFAULT 'group',
+        UNIQUE(source_fk, group_id)
+      );
     `);
+
+    // Migrate: add instance_fk column to messages
+    try {
+      this.db.exec(`ALTER TABLE messages ADD COLUMN instance_fk INTEGER REFERENCES source_instances(id) ON DELETE SET NULL`);
+      logger.info('📊 Migrated: added instance_fk column to messages');
+    } catch (e) { /* already exists */ }
 
     // Migrate: add delivery_channel column if not present (for existing installs)
     try {
@@ -406,6 +422,10 @@ class DatabaseManager {
       getCookies: this.db.prepare(`SELECT cookies_json FROM cookies_store WHERE site = ?`),
       getAllCookieSites: this.db.prepare(`SELECT site, updated_at FROM cookies_store`),
       deleteCookies: this.db.prepare(`DELETE FROM cookies_store WHERE site = ?`),
+      ensureSourceInstance: this.db.prepare(`
+        INSERT OR IGNORE INTO source_instances (source_fk, instance_type, group_id, group_name, chat_type)
+        VALUES (?, ?, ?, ?, ?)
+      `),
     };
   }
 
@@ -425,6 +445,11 @@ class DatabaseManager {
       data.media_type || data.mediaType || null,
       data.url || null
     );
+    // NEW: if instance_fk is provided, set it on the inserted message
+    const instanceFk = data.instance_fk || data.instanceFk;
+    if (instanceFk && result.lastInsertRowid) {
+      this.db.prepare('UPDATE messages SET instance_fk = ? WHERE id = ?').run(instanceFk, result.lastInsertRowid);
+    }
     return result.changes > 0;
   }
 
@@ -520,6 +545,20 @@ class DatabaseManager {
     if (result.changes > 0) {
       logger.info(`🧹 Cleaned up ${result.changes} messages older than ${daysToKeep} days`);
     }
+  }
+
+  ensureSourceInstance(sourceFk, instanceType, groupId, groupName, chatType) {
+    this.statements.ensureSourceInstance.run(sourceFk, instanceType, groupId, groupName, chatType);
+    const row = this.db.prepare(
+      `SELECT id FROM source_instances WHERE source_fk = ? AND group_id = ?`
+    ).get(sourceFk, groupId);
+    return row ? row.id : null;
+  }
+
+  updateSourceInstanceName(sourceFk, newName) {
+    this.db.prepare(
+      `UPDATE source_instances SET group_name = ? WHERE source_fk = ?`
+    ).run(newName, sourceFk);
   }
 
   getAllSources() { return this.statements.getAllSources.all(); }
