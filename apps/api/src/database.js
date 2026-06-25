@@ -598,7 +598,13 @@ class DatabaseManager {
     this.statements.updateSource.run(name, type, categorySlug, url || null, isPrivate, id);
   }
   updateSourceType(id, type) { this.statements.updateSourceType.run(type, id); }
-  deleteSource(id) { this.statements.deleteSource.run(id); }
+  deleteSource(id) {
+    const stmt = this.db.prepare('DELETE FROM source_instances WHERE source_fk = ?');
+    this.db.transaction(() => {
+      stmt.run(id);
+      this.statements.deleteSource.run(id);
+    })();
+  }
   getAllCategories() { return this.statements.getAllCategories.all(); }
   getActiveCategories() { return this.statements.getActiveCategories.all(); }
   getCategoryBySlug(slug) { return this.statements.getCategoryBySlug.get(slug); }

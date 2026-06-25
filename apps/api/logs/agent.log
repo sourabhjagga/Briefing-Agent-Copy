@@ -4,3 +4,24 @@
 [2026-06-25 15:35:11] [INFO] 📊 Migrated: added is_private column to sources
 [2026-06-25 15:35:11] [INFO] ✅ Database initialized: /tmp/test_mapping.db
 [2026-06-25 15:35:11] [INFO] Database connection closed.
+[2026-06-25 15:52:54] [INFO] 📊 Migrated: added instance_fk column to messages
+[2026-06-25 15:52:54] [INFO] 📊 Migrated: added category_slug column to sources
+[2026-06-25 15:52:54] [INFO] 📊 Migrated: added url column to sources
+[2026-06-25 15:52:54] [INFO] 📊 Migrated: added is_private column to sources
+[2026-06-25 15:52:54] [INFO] ✅ Database initialized: /tmp/test_verify.db
+[2026-06-25 15:52:54] [INFO] 📊 Migrated: added instance_fk column to messages
+[2026-06-25 15:52:54] [INFO] 📊 Migrated: added category_slug column to sources
+[2026-06-25 15:52:54] [INFO] 📊 Migrated: added url column to sources
+[2026-06-25 15:52:54] [INFO] 📊 Migrated: added is_private column to sources
+[2026-06-25 15:52:54] [INFO] ✅ Database initialized: /tmp/test_verify2.db
+[2026-06-25 15:53:02] [INFO] ✅ Database initialized: /tmp/test_verify.db
+[2026-06-25 15:53:02] [INFO] ✅ Database initialized: /tmp/test_verify2.db
+[2026-06-25 15:53:07] [INFO] ✅ Database initialized: /tmp/test_verify.db
+[2026-06-25 15:53:07] [INFO] Database connection closed.
+[2026-06-25 15:53:15] [INFO] 📊 Migrated: added instance_fk column to messages
+[2026-06-25 15:53:15] [INFO] 📊 Migrated: added category_slug column to sources
+[2026-06-25 15:53:15] [INFO] 📊 Migrated: added url column to sources
+[2026-06-25 15:53:15] [INFO] 📊 Migrated: added is_private column to sources
+[2026-06-25 15:53:15] [INFO] ✅ Database initialized: /tmp/test_verify.db
+[2026-06-25 15:53:15] [INFO] ✅ Database initialized: /tmp/test_verify2.db
+[2026-06-25 15:53:15] [INFO] Database connection closed.
