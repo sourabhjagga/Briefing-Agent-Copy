@@ -872,6 +872,62 @@ function startDashboardServer(database, whatsapp, telegramUser, scheduler, summa
     }
   });
 
+  // ─── Webhook Receiver ─────────────────────────────────────────────
+  app.post('/api/webhook/:sourceId', (req, res) => {
+    try {
+      const sourceId = req.params.sourceId;
+      const source = database.getAllSources().find(
+        s => s.source_id === sourceId && s.is_active && s.type.endsWith('-webhook')
+      );
+      if (!source) {
+        return res.status(404).json({ error: 'Webhook source not found or inactive' });
+      }
+
+      const payload = req.body;
+      if (!payload) {
+        return res.status(400).json({ error: 'Empty payload' });
+      }
+
+      // HMAC verification if secret is set via env
+      const secretKey = process.env[`WEBHOOK_SECRET_${sourceId.toUpperCase()}`];
+      if (secretKey) {
+        const crypto = require('crypto');
+        const signature = req.headers['x-hub-signature-256'] || req.headers['x-signature-256'] || '';
+        const computed = crypto.createHmac('sha256', secretKey).update(JSON.stringify(payload)).digest('hex');
+        if (!signature.includes(computed)) {
+          return res.status(401).json({ error: 'Invalid signature' });
+        }
+      }
+
+      const instanceId = database.ensureSourceInstance(
+        source.id, source.type, source.source_id, source.name, 'channel'
+      );
+
+      const title = payload.title || payload.subject || payload.event || 'Webhook Event';
+      const body = payload.body || payload.message || payload.text || JSON.stringify(payload).substring(0, 500);
+      const messageId = `webhook_${sourceId}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+
+      database.saveMessage({
+        messageId,
+        groupName: source.name,
+        groupId: source.source_id,
+        chatType: 'channel',
+        senderName: source.name,
+        body: `🔔 ${title}\n\n${body}`,
+        timestamp: Math.floor(Date.now() / 1000),
+        sourceType: source.type,
+        instanceFk: instanceId,
+      });
+
+      database.upsertScraperHealth(source.source_id, source.type, true, null);
+      logger.info(`🔔 Webhook: ${source.name} — received event`);
+      res.json({ success: true });
+    } catch (err) {
+      logger.error(`Webhook error: ${err.message}`);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   // Serve Next.js static export HTML routes
   // e.g. /sources -> sources.html, /categories -> categories.html
   // Also serves files inside subdirectories (e.g. /sources/ -> /sources.html)
