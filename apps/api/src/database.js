@@ -566,6 +566,17 @@ class DatabaseManager {
   getSourcesByCategory(categorySlug) { return this.statements.getSourcesByCategory.all(`${categorySlug}-%`); }
   getSourcesByTypeWildcard(typePattern) { return this.statements.getSourcesByCategory.all(typePattern); }
 
+  getLatestMessageBySourceFk(sourceFk) {
+    return this.db.prepare(`
+      SELECT m.body, m.timestamp, m.sender_name, m.group_name
+      FROM messages m
+      JOIN source_instances si ON si.id = m.instance_fk
+      WHERE si.source_fk = ?
+      ORDER BY m.timestamp DESC
+      LIMIT 1
+    `).get(sourceFk);
+  }
+
   getLatestMessageForSource(sourceType, cleanName, cleanSourceId) {
     return this.statements.getLatestMessageForSource.get(
       sourceType,

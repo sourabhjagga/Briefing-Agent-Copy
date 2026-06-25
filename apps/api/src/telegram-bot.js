@@ -333,11 +333,7 @@ class TelegramBotDispatcher {
         report += `<i>Checking latest captured post in SQLite from each source...</i>\n\n`;
 
         for (const s of allSources) {
-          const cleanName = s.name.replace(/\s*\(Telegram\)|\s*\(Reddit\)|\s*\(YouTube\)|\s*Recent Posts|\s*VIP Lounge|\s*Credit Cards Hub/gi, '').trim().toLowerCase();
-          const cleanSourceId = s.source_id.trim().replace('@', '').toLowerCase();
-
-          // Use compiled database method — avoids re-compilation on every /test call
-          const lastMsg = this.database.getLatestMessageForSource(s.type, cleanName, cleanSourceId);
+          const lastMsg = this.database.getLatestMessageBySourceFk(s.id);
 
           let icon = '👥';
           if (s.type.includes('forum')) icon = '🌐';
