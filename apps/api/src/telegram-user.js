@@ -72,10 +72,22 @@ class TelegramUserListener {
       const isAuthorized = await this.client.isUserAuthorized();
       if (isAuthorized) {
         logger.info('✅ Telegram User client authorized. Attaching message listener...');
+        const tgSources = this.database.getAllSources().filter(
+          s => s.is_active === 1 && s.type.includes('telegram')
+        );
+        for (const src of tgSources) {
+          this.database.upsertScraperHealth(src.source_id, src.type, true, null);
+        }
         await this._attachListener();
         this.isListening = true;
         return true;
       } else {
+        const tgSources = this.database.getAllSources().filter(
+          s => s.is_active === 1 && s.type.includes('telegram')
+        );
+        for (const src of tgSources) {
+          this.database.upsertScraperHealth(src.source_id, src.type, false, 'Not authorized');
+        }
         logger.warn('⚠️ Telegram User client NOT authorized. Dashboard login required.');
         return false;
       }
@@ -189,6 +201,16 @@ class TelegramUserListener {
 
         if (!matchedSource) return;
 
+        const chatTypeName = chat.className === 'Channel' ? (chat.megagroup ? 'forum' : 'channel') : 'group';
+
+        const instanceId = this.database.ensureSourceInstance(
+          matchedSource.id,
+          matchedSource.type,
+          chatId,
+          chatTitle,
+          chatTypeName
+        );
+
         const bodyText = msg.message || '';
         if (!bodyText.trim()) return;
 
@@ -199,7 +221,7 @@ class TelegramUserListener {
           message_id: `tguser-${chatId}-${msg.id}`,
           group_id: chatId,
           group_name: chatTitle,
-          chat_type: chat.className === 'Channel' ? (chat.megagroup ? 'forum' : 'channel') : 'group',
+          chat_type: chatTypeName,
           sender_name: senderName,
           sender_id: senderId,
           body: bodyText,
@@ -209,6 +231,7 @@ class TelegramUserListener {
           reply_to: msg.replyTo ? String(msg.replyTo.replyToMsgId) : null,
           media_type: msg.media ? msg.media.className : null,
           url: null,
+          instanceFk: instanceId,
         };
 
         const inserted = this.database.insertMessage(messageData);
