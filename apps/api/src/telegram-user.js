@@ -69,9 +69,9 @@ class TelegramUserListener {
     try {
       logger.info('📱 Starting Telegram User client...');
       await this.client.connect();
-      this._saveSession();
       const isAuthorized = await this.client.isUserAuthorized();
       if (isAuthorized) {
+        this._saveSession();
         logger.info('✅ Telegram User client authorized. Attaching message listener...');
         const tgSources = this.database.getAllSources().filter(
           s => s.is_active === 1 && s.type.includes('telegram')

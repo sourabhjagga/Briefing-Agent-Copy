@@ -365,8 +365,8 @@ class TelegramBotDispatcher {
 
   async sendMessage(text) {
     try {
-      const sanitizedText = sanitizeMarkdown(text);
-      const chunks = splitMessage(sanitizedText);
+      const rawChunks = splitMessage(text);
+      const chunks = rawChunks.map(c => sanitizeMarkdown(c));
       for (let i = 0; i < chunks.length; i++) {
         const chunk = chunks[i];
         await this.bot.telegram.sendMessage(this.chatId, chunk, {

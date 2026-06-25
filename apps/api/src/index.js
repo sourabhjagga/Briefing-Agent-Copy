@@ -663,9 +663,9 @@ function startDashboardServer(database, whatsapp, telegramUser, scheduler, summa
     }
   });
 
-  app.get('/api/whatsapp/discover', (req, res) => {
+  app.get('/api/whatsapp/discover', async (req, res) => {
     try {
-      const groups = whatsapp.getAllChats();
+      const groups = await whatsapp.discoverChats();
       res.json(groups);
     } catch (err) {
       res.status(500).json({ error: err.message });

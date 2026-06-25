@@ -56,6 +56,15 @@ class WhatsAppListener {
           }
         }
       });
+
+      // Remove stale entries (e.g., from old chat-name-map.json before the fix)
+      for (const id of Object.keys(this.chatNameMap)) {
+        if (!this.targetIds.has(id) && !id.includes('@g.us') && !id.includes('@newsletter')) {
+          delete this.chatNameMap[id];
+          updated = true;
+        }
+      }
+
       if (updated) {
         this._saveChatNameMap();
       }
@@ -334,42 +343,44 @@ class WhatsAppListener {
       });
       this._saveChatNameMap();
       logger.info(`✅ Synced ${Object.keys(groups).length} participating groups from account.`);
-
-      try {
-        logger.info('🔍 Fetching subscribed WhatsApp newsletters/channels...');
-        let newsletters = null;
-        if (typeof this.sock.newsletterGetSubscribed === 'function') {
-          newsletters = await this.sock.newsletterGetSubscribed();
-          logger.info(`✅ Newsletter result (method 1): ${JSON.stringify(newsletters)}`);
-        } else if (typeof this.sock.query === 'function') {
-          const result = await this.sock.query({
-            tag: 'iq',
-            attrs: { to: '@s.whatsapp.net', xmlns: 'w:mex', type: 'get' },
-            content: [{ tag: 'query', attrs: {}, content: [{ tag: 'list_type', attrs: { v: '2' } }] }]
-          });
-          logger.info(`✅ Newsletter result (method 2): ${JSON.stringify(result)}`);
-          if (result?.content) {
-            newsletters = result.content.map(c => ({
-              id: c.attrs?.id || c.attrs?.jid,
-              name: c.attrs?.name || c.attrs?.subject || 'WhatsApp Channel'
-            })).filter(n => n.id);
-          }
-        }
-        if (newsletters?.length > 0) {
-          newsletters.forEach(n => {
-            const id = (n.id || n.jid).toLowerCase();
-            this.chatNameMap[id] = n.name || n.subject || 'WhatsApp Channel';
-          });
-          this._saveChatNameMap();
-          logger.info(`✅ Synced ${newsletters.length} newsletters/channels.`);
-        } else {
-          logger.info('ℹ️ No newsletters returned.');
-        }
-      } catch (newsErr) {
-        logger.warn(`Could not sync newsletters: ${newsErr.message}`);
-      }
     } catch (err) {
       logger.error(`WhatsApp group discovery failed: ${err.message}`);
+    }
+
+    this._syncNewsletters();
+  }
+
+  async _syncNewsletters() {
+    try {
+      logger.info('🔍 Fetching subscribed WhatsApp newsletters/channels...');
+      let newsletters = null;
+      if (typeof this.sock.newsletterGetSubscribed === 'function') {
+        newsletters = await this.sock.newsletterGetSubscribed();
+      } else if (typeof this.sock.query === 'function') {
+        const result = await this.sock.query({
+          tag: 'iq',
+          attrs: { to: '@s.whatsapp.net', xmlns: 'w:mex', type: 'get' },
+          content: [{ tag: 'query', attrs: {}, content: [{ tag: 'list_type', attrs: { v: '2' } }] }]
+        });
+        if (result?.content) {
+          newsletters = result.content.map(c => ({
+            id: c.attrs?.id || c.attrs?.jid,
+            name: c.attrs?.name || c.attrs?.subject || 'WhatsApp Channel'
+          })).filter(n => n.id);
+        }
+      }
+      if (newsletters?.length > 0) {
+        newsletters.forEach(n => {
+          const id = (n.id || n.jid).toLowerCase();
+          this.chatNameMap[id] = n.name || n.subject || 'WhatsApp Channel';
+        });
+        this._saveChatNameMap();
+        logger.info(`✅ Synced ${newsletters.length} newsletters/channels.`);
+      } else {
+        logger.info('ℹ️ No newsletters returned.');
+      }
+    } catch (newsErr) {
+      logger.warn(`Could not sync newsletters: ${newsErr.message}`);
     }
   }
 
@@ -379,6 +390,11 @@ class WhatsAppListener {
     } catch (err) {
       logger.error(`Failed to save chat-name-map: ${err.message}`);
     }
+  }
+
+  async discoverChats() {
+    await this._discoverChats();
+    return this.getAllChats();
   }
 
   getAllChats() {

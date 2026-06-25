@@ -47,7 +47,7 @@ class YoutubeScraper {
     logger.info('🔄 Running YouTube channel scraper session...');
     try {
       const allSources = this.database.getAllSources();
-      const activeYoutube = allSources.filter(s => s.is_active === 1 && s.type === 'youtube');
+      const activeYoutube = allSources.filter(s => s.is_active === 1 && s.type.endsWith('youtube'));
 
       if (activeYoutube.length === 0) {
         logger.warn('⚠️ No active YouTube sources. Add one with type "YouTube" in Sources dashboard.');

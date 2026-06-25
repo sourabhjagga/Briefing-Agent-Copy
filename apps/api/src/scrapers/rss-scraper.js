@@ -27,7 +27,7 @@ class RssScraper {
   }
 
   async scrape() {
-    const sources = this.database.getSourcesByTypeWildcard('rss');
+    const sources = this.database.getAllSources().filter(s => s.is_active && s.type.endsWith('rss') && s.url);
 
     for (const source of sources) {
       if (!this.active) break;
