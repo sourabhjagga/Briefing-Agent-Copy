@@ -79,6 +79,14 @@ class YoutubeScraper {
         }
       }
 
+      const instanceId = this.database.ensureSourceInstance(
+        source.id,
+        source.type,
+        `yt_channel_${channelId}`,
+        source.name,
+        'channel'
+      );
+
       logger.info(`📡 Scraping YouTube RSS feed for: "${source.name}" (ID: ${channelId})`);
       const url = `https://www.youtube.com/feeds/videos.xml?channel_id=${channelId}`;
       const res = await axios.get(url, {
@@ -157,7 +165,8 @@ class YoutubeScraper {
           hasMedia: false,
           mediaCaption: '',
           isForwarded: false,
-          sourceType: source.type
+          sourceType: source.type,
+          instanceFk: instanceId
         });
 
         logger.info(`✅ Successfully processed video summary for "${video.title}"`);
