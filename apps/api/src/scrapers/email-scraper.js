@@ -25,7 +25,7 @@ class EmailScraper {
 
   async scrapeAll() {
     const sources = this.database.getAllSources()
-      .filter(s => s.is_active && s.type.endsWith('-email') && s.url);
+      .filter(s => s.is_active && s.type === 'email' && s.url);
 
     if (sources.length === 0) {
       logger.debug('📧 No active email sources found.');

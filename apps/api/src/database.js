@@ -638,6 +638,10 @@ class DatabaseManager {
       { slug: 'youtube', display_name: 'YouTube' },
       { slug: 'whatsapp', display_name: 'WhatsApp' },
       { slug: 'telegram', display_name: 'Telegram' },
+      { slug: 'rss', display_name: 'RSS' },
+      { slug: 'email', display_name: 'Email' },
+      { slug: 'api', display_name: 'JSON API' },
+      { slug: 'generic-webhook', display_name: 'Webhook' },
     ];
 
     let seeded = 0;
@@ -654,7 +658,7 @@ class DatabaseManager {
     }
 
     if (seeded > 0) {
-      logger.info(`🌱 Seeded ${seeded} default source type${seeded === 1 ? '' : 's'} (forums, reddit, youtube, whatsapp, telegram).`);
+      logger.info(`🌱 Seeded ${seeded} default source types.`);
     }
   }
 

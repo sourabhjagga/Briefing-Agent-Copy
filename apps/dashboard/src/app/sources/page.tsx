@@ -351,6 +351,22 @@ export default function SourcesPage() {
             <h3 className="font-medium">Telegram</h3>
             <p className="text-text-secondary">Set <strong>Source ID</strong> to the <code className="bg-surface-alt px-1 rounded text-xs">@username</code> or chat ID. URL is not used.</p>
           </div>
+          <div className="space-y-1">
+            <h3 className="font-medium">RSS</h3>
+            <p className="text-text-secondary">Set <strong>URL</strong> to the RSS/Atom feed URL. The scraper fetches new entries on each cycle and tracks already-seen GUIDs to avoid duplicates.</p>
+          </div>
+          <div className="space-y-1">
+            <h3 className="font-medium">Email</h3>
+            <p className="text-text-secondary">Set <strong>Source ID</strong> to a label/folder name (e.g. <code className="bg-surface-alt px-1 rounded text-xs">INBOX</code>). <strong>URL</strong> optionally sets IMAP folder. Requires IMAP credentials in env.</p>
+          </div>
+          <div className="space-y-1">
+            <h3 className="font-medium">JSON API</h3>
+            <p className="text-text-secondary">Set <strong>URL</strong> to the JSON API endpoint. <strong>Source ID</strong> is an optional sub-path or identifier. The scraper GETs the URL and inserts each object with <code className="bg-surface-alt px-1 rounded text-xs">body</code> or <code className="bg-surface-alt px-1 rounded text-xs">title</code> fields.</p>
+          </div>
+          <div className="space-y-1">
+            <h3 className="font-medium">Webhook</h3>
+            <p className="text-text-secondary">No configuration needed — sources of this type accept incoming POST requests at <code className="bg-surface-alt px-1 rounded text-xs">/api/webhook/{'{sourceId}'}</code>. Set <strong>Source ID</strong> as the unique slug you'll use in the webhook URL.</p>
+          </div>
         </div>
       </Card>
 

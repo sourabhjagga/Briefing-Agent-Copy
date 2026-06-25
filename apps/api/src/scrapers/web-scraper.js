@@ -33,7 +33,7 @@ class WebScraper {
   async scrape() {
     const allSources = this.database.getAllSources();
     const targets = allSources.filter(
-      s => s.is_active && s.type.endsWith('-web') && s.url
+      s => s.is_active && ['forums', 'reddit'].includes(s.type) && s.url
     );
     if (targets.length === 0) {
       logger.warn('⚠️ No active web sources with URLs found in database.');

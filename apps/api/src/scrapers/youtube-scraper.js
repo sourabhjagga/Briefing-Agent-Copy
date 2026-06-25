@@ -47,10 +47,10 @@ class YoutubeScraper {
     logger.info('🔄 Running YouTube channel scraper session...');
     try {
       const allSources = this.database.getAllSources();
-      const activeYoutube = allSources.filter(s => s.is_active === 1 && (s.type === 'cc-youtube' || s.type === 'deals-youtube'));
+      const activeYoutube = allSources.filter(s => s.is_active === 1 && s.type === 'youtube');
 
       if (activeYoutube.length === 0) {
-        logger.warn('⚠️ No active YouTube sources with type cc-youtube or deals-youtube. Add one in Sources dashboard.');
+        logger.warn('⚠️ No active YouTube sources. Add one with type "YouTube" in Sources dashboard.');
       }
 
       for (const source of activeYoutube) {

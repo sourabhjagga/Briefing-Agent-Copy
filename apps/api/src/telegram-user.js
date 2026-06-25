@@ -69,6 +69,7 @@ class TelegramUserListener {
     try {
       logger.info('📱 Starting Telegram User client...');
       await this.client.connect();
+      this._saveSession();
       const isAuthorized = await this.client.isUserAuthorized();
       if (isAuthorized) {
         logger.info('✅ Telegram User client authorized. Attaching message listener...');
@@ -138,9 +139,7 @@ class TelegramUserListener {
       }
     }
 
-    const sessionString = this.client.session.save();
-    fs.writeFileSync(this.sessionPath, sessionString, 'utf8');
-    logger.info('✅ Telegram User session saved to disk.');
+    this._saveSession();
 
     await this._attachListener();
     this.isListening = true;
@@ -170,8 +169,24 @@ class TelegramUserListener {
     };
   }
 
+  _saveSession() {
+    try {
+      const sessionString = this.client.session.save();
+      if (sessionString) {
+        fs.writeFileSync(this.sessionPath, sessionString, 'utf8');
+        logger.info('💾 Telegram session saved to disk');
+      }
+    } catch (err) {
+      logger.error(`Failed to save Telegram session: ${err.message}`);
+    }
+  }
+
   async _attachListener() {
-    const { NewMessage } = require('telegram/events');
+    if (this.isListening) return;
+    const { NewMessage, Raw } = require('telegram/events');
+    const { UpdateConnectionState } = require('telegram/network');
+
+    this.client.addEventHandler(() => this._saveSession(), new Raw({ types: [UpdateConnectionState] }));
 
     this.client.addEventHandler(async (event) => {
       try {

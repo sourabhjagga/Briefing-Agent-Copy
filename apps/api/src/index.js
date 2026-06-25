@@ -811,10 +811,6 @@ function startDashboardServer(database, whatsapp, telegramUser, scheduler, summa
   app.delete('/api/cookies/:site', (req, res) => {
     try {
       const { site } = req.params;
-      const VALID_SITES = ['youtube', 'technofino', 'desidime', 'reddit'];
-      if (!VALID_SITES.includes(site)) {
-        return res.status(400).json({ error: `Invalid site. Must be one of: ${VALID_SITES.join(', ')}` });
-      }
       database.deleteCookies(site);
       [path.resolve(__dirname, `../data/${site}_cookies.json`),
        path.resolve(__dirname, `../../data/${site}_cookies.json`)].forEach(p => {
@@ -828,9 +824,13 @@ function startDashboardServer(database, whatsapp, telegramUser, scheduler, summa
   });
 
   app.get('/api/cookies/status', (req, res) => {
-    const SITES = ['youtube', 'technofino', 'desidime', 'reddit'];
+    const cookieSites = database.getAllCookieSites();
+    const seen = new Set();
+    for (const row of cookieSites) seen.add(row.site);
+    const filePaths = fs.readdirSync(path.resolve(__dirname, '../data')).filter(f => f.endsWith('_cookies.json'));
+    for (const f of filePaths) seen.add(f.replace('_cookies.json', ''));
     const result = {};
-    for (const site of SITES) {
+    for (const site of seen) {
       const row = database.getCookies(site);
       const filePath = path.resolve(__dirname, `../data/${site}_cookies.json`);
       result[site] = !!(row || fs.existsSync(filePath));
@@ -842,10 +842,6 @@ function startDashboardServer(database, whatsapp, telegramUser, scheduler, summa
     try {
       const { site, cookies } = req.body;
       if (!site || !cookies) return res.status(400).json({ error: 'Missing site or cookies payload' });
-      const VALID_SITES = ['youtube', 'technofino', 'desidime', 'reddit'];
-      if (!VALID_SITES.includes(site)) {
-        return res.status(400).json({ error: 'Invalid site name' });
-      }
       const parsedCookies = parseCookiesInput(cookies);
       if (!parsedCookies || parsedCookies.length === 0) {
         return res.status(400).json({ error: 'Invalid cookies format. Paste a JSON array or a Netscape HTTP Cookie File.' });
@@ -866,11 +862,10 @@ function startDashboardServer(database, whatsapp, telegramUser, scheduler, summa
         }
       }
       logger.info(`🔐 Saved imported cookies for ${site} successfully in DB & files.`);
-      if (scrapers && scrapers[site]) {
-        const fn = site === 'desidime'
-          ? () => scrapers[site].scrapeDesiDime()
-          : () => scrapers[site].scrape();
-        fn().catch(e => logger.error(`Immediate ${site} scrape fail: ${e.message}`));
+      const SITE_SCRAPER_MAP = { technofino: 'web', desidime: 'web', reddit: 'web', youtube: 'youtube' };
+      const scraperKey = SITE_SCRAPER_MAP[site];
+      if (scraperKey && scrapers[scraperKey]) {
+        scrapers[scraperKey].scrape().catch(e => logger.error(`Immediate ${site} scrape fail: ${e.message}`));
       }
       res.json({ success: true });
     } catch (err) {
@@ -982,34 +977,6 @@ async function main() {
 
   const summarizer = new Summarizer(process.env.GEMINI_API_KEY, process.env.OPENROUTER_API_KEY);
   const botInstances = createBotInstances(database, summarizer);
-
-  // Seed scraper sources from database so the Sources dashboard is the single source of truth
-  const systemSources = [
-    { name: 'Technofino VIP Lounge',             source_id: 'technofino',   type: 'cc-forum',   category_slug: 'cc',    url: 'https://technofino.in/community/forums/vip-credit-card-lounge.30/',                       is_private: 1 },
-    { name: 'Technofino Credit Cards Hub',        source_id: 'technofino2',  type: 'cc-forum',   category_slug: 'cc',    url: 'https://technofino.in/community/categories/credit-cards.42/',                                 is_private: 0 },
-    { name: 'Technofino Recent Posts',            source_id: 'technofino3',  type: 'cc-forum',   category_slug: 'cc',    url: 'https://technofino.in/community/whats-new/posts/',                                           is_private: 0 },
-    { name: 'DesiDime Deals',                     source_id: 'desidime',     type: 'deals-forum', category_slug: 'deals', url: 'https://www.desidime.com/forums/hot-deals-online',                                               is_private: 0 },
-    { name: 'Reddit (r/CreditCardsIndia)',         source_id: 'reddit',       type: 'cc-reddit',  category_slug: 'cc',    url: 'https://www.reddit.com/r/CreditCardsIndia/',                                                    is_private: 0 },
-  ];
-  for (const src of systemSources) {
-    const existing = database.getAllSources().find(s => s.source_id === src.source_id);
-    if (!existing) {
-      database.addSource(src.name, src.source_id, src.type, src.category_slug, src.url, src.is_private);
-      logger.info(`🌱 Seeded scraper source: ${src.name} (${src.source_id})`);
-    } else if (!existing.url && src.url) {
-      database.updateSource(existing.id, existing.name, existing.type, existing.category_slug, src.url, existing.is_private);
-      logger.info(`🔧 Updated source "${src.name}" with URL: ${src.url}`);
-    }
-  }
-
-  // Migrate existing sources with bare types to prefixed types for consistency
-  for (const source of database.getAllSources()) {
-    if (source.category_slug && source.type && !source.type.startsWith(source.category_slug + '-')) {
-      const prefixedType = `${source.category_slug}-${source.type}`;
-      database.updateSource(source.id, source.name, prefixedType, source.category_slug);
-      logger.info(`🔧 Migrated source type: "${source.type}" → "${prefixedType}" for "${source.name}"`);
-    }
-  }
 
   const whatsapp = new WhatsAppListener(database, null);
   const telegramUser = new TelegramUserListener(database, null);

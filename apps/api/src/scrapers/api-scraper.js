@@ -24,7 +24,7 @@ class ApiScraper {
 
   async scrapeAll() {
     const sources = this.database.getAllSources()
-      .filter(s => s.is_active && s.type.endsWith('-api') && s.url);
+      .filter(s => s.is_active && s.type === 'api' && s.url);
 
     for (const source of sources) {
       await this._scrapeEndpoint(source);
