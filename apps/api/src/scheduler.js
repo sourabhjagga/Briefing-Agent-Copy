@@ -127,7 +127,11 @@ class Scheduler {
           await this.whatsapp.sendMessage(deliveryJid, `🤷‍♂️ *No updates today!*\n\nThere were no messages captured from your monitored ${sourcePrefix.toUpperCase()} sources today.`);
         }
         if (shouldSendTelegram && telegramInstance) {
-          await telegramInstance.sendMessage(`🤷‍♂️ <b>No updates today!</b>\n\nThere were no messages captured from your monitored ${sourcePrefix.toUpperCase()} sources today.`);
+          try {
+            await telegramInstance.sendMessage(`🤷‍♂️ <b>No updates today!</b>\n\nThere were no messages captured from your monitored ${sourcePrefix.toUpperCase()} sources today.`);
+          } catch (e) {
+            logger.error(`Failed to send Telegram 'No updates' for ${sourcePrefix}: ${e.message}`);
+          }
         }
         return;
       }
@@ -159,7 +163,11 @@ class Scheduler {
       
       // Delivery: Telegram
       if (shouldSendTelegram && telegramInstance) {
-        await telegramInstance.sendMessage(summary);
+        try {
+          await telegramInstance.sendMessage(summary);
+        } catch (e) {
+          logger.error(`Failed to send Telegram briefing for ${sourcePrefix}: ${e.message}`);
+        }
       }
 
       // FIX: Persist briefs and summaries for ALL categories, not just 'cc'.

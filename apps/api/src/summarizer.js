@@ -70,9 +70,10 @@ class Summarizer {
   async answerQuestion(question, contextMessages) {
     const msgText = contextMessages.length > 0
       ? contextMessages.map(m => {
-          const date = new Date(m.timestamp * 1000).toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata' });
+          const ts = m.timestamp ? Number(m.timestamp) * 1000 : Date.now();
+          const date = new Date(ts).toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata' });
           const safeName = m.group_name || 'Unknown';
-          return `[${date} | ${safeName}] ${m.sender_name}: ${m.body}`;
+          return `[${date} | ${safeName}] ${m.sender_name || 'Unknown'}: ${m.body}`;
         }).join('\n')
       : 'No relevant messages found in the database.';
 
@@ -220,8 +221,9 @@ STRICT RULES:
 
       messageText += `\n--- SOURCE: ${groupName} (${msgs.length} msgs total) ---\n`;
       for (const msg of validSampled) {
-        const time = new Date(msg.timestamp * 1000).toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata' });
-        messageText += `[${time}] ${msg.sender_name}: ${msg.body}\n`;
+        const ts = msg.timestamp ? Number(msg.timestamp) * 1000 : Date.now();
+        const time = new Date(ts).toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata' });
+        messageText += `[${time}] ${msg.sender_name || 'Unknown'}: ${msg.body}\n`;
         totalIncluded++;
       }
     }
@@ -314,7 +316,7 @@ STRICT RULES:
 
   _extractDealUrls(groupedMessages) {
     const urlMap = {};
-    const anchorRegex = /<a\s+href="([^"]+)"[^>]*>/i;
+    const anchorRegex = /<a[^>]*\s+href\s*=\s*["']([^"']+)["'][^>]*>/i;
     const titlePatterns = [
       /🔥\s*<b>Deal:<\/b>\s*([^\n<]{5,100})/,
       /📌\s*<b>Title:<\/b>\s*([^\n<]{5,100})/,

@@ -656,6 +656,7 @@ function startDashboardServer(database, whatsapp, telegramUser, scheduler, summa
       const id = parseIdParam(req.params.id);
       if (!id) return res.status(400).json({ error: 'Invalid ID' });
       database.deleteSource(id);
+      whatsapp._refreshTargets();
       res.json({ success: true });
     } catch (err) {
       res.status(500).json({ error: err.message });
@@ -810,28 +811,6 @@ function startDashboardServer(database, whatsapp, telegramUser, scheduler, summa
     }
   });
 
-  app.post('/api/cookies/delete', (req, res) => {
-    try {
-      const { site } = req.body;
-      if (!site) return res.status(400).json({ error: 'Missing site parameter' });
-      const VALID_SITES = ['youtube', 'technofino', 'desidime', 'reddit'];
-      if (!VALID_SITES.includes(site)) {
-        return res.status(400).json({ error: 'Invalid site name' });
-      }
-      database.deleteCookies(site);
-      // Delete from both API path (../data/) and scraper path (../../data/)
-      // to handle the path mismatch between src/index.js and src/scrapers/*.js
-      [path.resolve(__dirname, `../data/${site}_cookies.json`),
-       path.resolve(__dirname, `../../data/${site}_cookies.json`)].forEach(p => {
-        if (fs.existsSync(p)) fs.unlinkSync(p);
-      });
-      logger.info(`❌ Deleted session cookies for ${site} from DB & files.`);
-      res.json({ success: true });
-    } catch (err) {
-      res.status(500).json({ error: err.message });
-    }
-  });
-
   // Serve Next.js static export HTML routes
   // e.g. /sources -> sources.html, /categories -> categories.html
   // Also serves files inside subdirectories (e.g. /sources/ -> /sources.html)
@@ -958,6 +937,7 @@ async function main() {
     reddit: redditScraper,
     technofino: forumScraper,
     desidime: dealsScraper,
+    youtube: youtubeScraper,
   };
 
   const healthServer = startDashboardServer(
@@ -965,13 +945,13 @@ async function main() {
   );
 
   for (const [slug, bot] of botInstances) {
-    const connected = await bot.start();
-    if (!connected) {
-      logger.warn(`⚠️ Telegram Bot for category "${slug}" failed to connect.`);
-      if (slug === 'cc') {
-        logger.error('Cannot connect to Main CC Telegram Bot. Verify your TELEGRAM_BOT_TOKEN.');
-        process.exit(1);
+    try {
+      const connected = await bot.start();
+      if (!connected) {
+        logger.warn(`⚠️ Telegram Bot for category "${slug}" failed to connect.`);
       }
+    } catch (err) {
+      logger.error(`Telegram Bot for category "${slug}" crashed on start: ${err.message}`);
     }
   }
 

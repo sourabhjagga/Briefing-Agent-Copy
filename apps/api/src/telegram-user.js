@@ -181,7 +181,7 @@ class TelegramUserListener {
           const srcId = src.source_id.replace('@', '').toLowerCase();
           const thisChatId = chatId.toLowerCase();
           const thisUsername = (chat.username || '').toLowerCase();
-          if (srcId === thisChatId || srcId === thisUsername || thisUsername.includes(srcId) || thisChatId.includes(srcId)) {
+          if (srcId === thisChatId || srcId === thisUsername) {
             matchedSource = src;
             break;
           }

@@ -282,6 +282,9 @@ class DatabaseManager {
       getActiveSourcesByType: this.db.prepare(`
         SELECT source_id FROM sources WHERE type = ? AND is_active = 1
       `),
+      getWhatsAppSources: this.db.prepare(`
+        SELECT * FROM sources WHERE type = ? AND is_active = 1 ORDER BY created_at DESC
+      `),
       getSourcesByCategory: this.db.prepare(`
         SELECT * FROM sources WHERE type LIKE ? ORDER BY created_at DESC
       `),
@@ -312,7 +315,8 @@ class DatabaseManager {
         VALUES (?, ?, ?, 0)
         ON CONFLICT(source_id) DO UPDATE SET 
           name=excluded.name, 
-          type=excluded.type
+          type=excluded.type,
+          is_active=0
       `),
       toggleSource: this.db.prepare(`UPDATE sources SET is_active = ? WHERE id = ?`),
       updateSource: this.db.prepare(`UPDATE sources SET name = ?, type = ?, category_slug = ? WHERE id = ?`),
@@ -378,10 +382,19 @@ class DatabaseManager {
 
   insertMessage(data) {
     const result = this.statements.insertMessage.run(
-      data.message_id, data.group_id, data.group_name, data.chat_type || 'group',
-      data.sender_name, data.sender_id, data.body, data.timestamp,
-      data.source_type, data.is_reply ? 1 : 0, data.reply_to || null,
-      data.media_type || null, data.url || null
+      data.message_id || data.messageId || null,
+      data.group_id || data.groupId || null,
+      data.group_name || data.groupName || null,
+      data.chat_type || data.chatType || 'group',
+      data.sender_name || data.senderName || 'Unknown',
+      data.sender_id || data.senderNumber || null,
+      data.body || null,
+      data.timestamp || null,
+      data.source_type || data.sourceType || null,
+      (data.is_reply ?? data.isReply) ? 1 : 0,
+      data.reply_to || data.replyTo || null,
+      data.media_type || data.mediaType || null,
+      data.url || null
     );
     return result.changes > 0;
   }
@@ -394,25 +407,22 @@ class DatabaseManager {
     return this.insertMessage(data);
   }
 
-  getTodayMessages(sourcePrefix) {
+  _istDayStart() {
     const now = Date.now();
     const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
-    const startOfDay = Math.floor((Math.floor((now + IST_OFFSET_MS) / 86400000) * 86400000 - IST_OFFSET_MS) / 1000);
-    return this.statements.getTodayMessages.all(`${sourcePrefix}%`, startOfDay);
+    return Math.floor((Math.floor((now + IST_OFFSET_MS) / 86400000) * 86400000 - IST_OFFSET_MS) / 1000);
+  }
+
+  getTodayMessages(sourcePrefix) {
+    return this.statements.getTodayMessages.all(`${sourcePrefix}%`, this._istDayStart());
   }
 
   getTodayMessageCount(sourcePrefix) {
-    const now = Date.now();
-    const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
-    const startOfDay = Math.floor((Math.floor((now + IST_OFFSET_MS) / 86400000) * 86400000 - IST_OFFSET_MS) / 1000);
-    return this.statements.getTodayMessageCount.get(`${sourcePrefix}%`, startOfDay).count;
+    return this.statements.getTodayMessageCount.get(`${sourcePrefix}%`, this._istDayStart()).count;
   }
 
   getTodayActiveGroups(sourcePrefix) {
-    const now = Date.now();
-    const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
-    const startOfDay = Math.floor((Math.floor((now + IST_OFFSET_MS) / 86400000) * 86400000 - IST_OFFSET_MS) / 1000);
-    return this.statements.getTodayActiveGroups.all(`${sourcePrefix}%`, startOfDay);
+    return this.statements.getTodayActiveGroups.all(`${sourcePrefix}%`, this._istDayStart());
   }
 
   searchMessages(keyword, limit = 20, sourcePrefix = '') {
@@ -460,10 +470,7 @@ class DatabaseManager {
   }
 
   getTodayMessageCountBySourceType() {
-    const now = Date.now();
-    const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
-    const startOfDay = Math.floor((Math.floor((now + IST_OFFSET_MS) / 86400000) * 86400000 - IST_OFFSET_MS) / 1000);
-    return this.statements.getTodayMessageCountBySourceType.all(startOfDay);
+    return this.statements.getTodayMessageCountBySourceType.all(this._istDayStart());
   }
 
   getTotalWhatsAppMessages() {
@@ -657,9 +664,8 @@ class DatabaseManager {
   }
 
   getWhatsAppTargets(categorySlug) {
-    return this.getAllSources().filter(s =>
-      s.type === `${categorySlug}-whatsapp` && s.is_active === 1
-    );
+    const type = `${categorySlug}-whatsapp`;
+    return this.statements.getWhatsAppSources.all(type);
   }
 
   saveCookies(site, cookiesArray) {
