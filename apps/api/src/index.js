@@ -26,6 +26,9 @@ const Scheduler = require('./scheduler');
 
 const WebScraper = require('./scrapers/web-scraper');
 const YoutubeScraper = require('./scrapers/youtube-scraper');
+const ApiScraper = require('./scrapers/api-scraper');
+const RssScraper = require('./scrapers/rss-scraper');
+const EmailScraper = require('./scrapers/email-scraper');
 
 function validateConfig() {
   const required = ['TELEGRAM_BOT_TOKEN', 'TELEGRAM_CHAT_ID', 'GEMINI_API_KEY'];
@@ -1035,6 +1038,8 @@ async function main() {
   whatsapp.onAlert = sendSystemAlert;
   telegramUser.onAlert = sendSystemAlert;
 
+  const apiScraper = new ApiScraper(database, sendSystemAlert);
+
   global.restartWhatsApp = async (force = false) => {
     logger.warn('🔄 Received global request to restart WhatsApp client...');
     await whatsapp.stop();
@@ -1052,10 +1057,14 @@ async function main() {
 
   const webScraper = new WebScraper(database, sendSystemAlert);
   const youtubeScraper = new YoutubeScraper(database, summarizer);
+  const emailScraper = new EmailScraper(database, sendSystemAlert);
+  const rssScraper = new RssScraper(database, sendSystemAlert);
 
   const scrapers = {
     web: webScraper,
     youtube: youtubeScraper,
+    api: apiScraper,
+    rss: rssScraper,
   };
 
   const healthServer = startDashboardServer(
@@ -1079,6 +1088,9 @@ async function main() {
 
   webScraper.start();
   youtubeScraper.start();
+  emailScraper.start();
+  apiScraper.start();
+  rssScraper.start();
 
   for (const [slug, bot] of botInstances) {
     try {
@@ -1099,6 +1111,9 @@ async function main() {
     scheduler.stop();
     webScraper.stop();
     youtubeScraper.stop();
+    emailScraper.stop();
+    rssScraper.stop();
+    apiScraper.stop();
     await whatsapp.stop();
     await telegramUser.logout();
     for (const [, bot] of botInstances) {

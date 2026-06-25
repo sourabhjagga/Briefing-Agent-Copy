@@ -564,6 +564,7 @@ class DatabaseManager {
   getAllSources() { return this.statements.getAllSources.all(); }
   getActiveSourcesByType(type) { return this.statements.getActiveSourcesByType.all(type).map(r => r.source_id); }
   getSourcesByCategory(categorySlug) { return this.statements.getSourcesByCategory.all(`${categorySlug}-%`); }
+  getSourcesByTypeWildcard(typePattern) { return this.statements.getSourcesByCategory.all(typePattern); }
 
   getLatestMessageForSource(sourceType, cleanName, cleanSourceId) {
     return this.statements.getLatestMessageForSource.get(
