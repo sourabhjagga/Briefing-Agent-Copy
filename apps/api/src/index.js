@@ -746,6 +746,36 @@ function startDashboardServer(database, whatsapp, telegramUser, scheduler, summa
     }
   });
 
+  function parseCookiesInput(input) {
+    if (typeof input !== 'string') return Array.isArray(input) ? input : null;
+    const trimmed = input.trim();
+    // Try JSON array first
+    if (trimmed.startsWith('[')) {
+      try { return JSON.parse(trimmed); }
+      catch (e) { return null; }
+    }
+    // Try Netscape HTTP Cookie File format
+    const lines = trimmed.split('\n');
+    const cookies = [];
+    for (const line of lines) {
+      const trimmedLine = line.trim();
+      if (!trimmedLine || trimmedLine.startsWith('#')) continue;
+      const parts = trimmedLine.split('\t');
+      if (parts.length < 7) continue;
+      const [domain, , path, secure, expires, name, ...rest] = parts;
+      cookies.push({
+        domain: domain || '',
+        path: path || '/',
+        secure: secure === 'TRUE',
+        expires: parseInt(expires, 10) || 0,
+        expirationDate: parseInt(expires, 10) || 0,
+        name: name || '',
+        value: rest.join('\t') || '',
+      });
+    }
+    return cookies.length > 0 ? cookies : null;
+  }
+
   app.post('/api/cookies', (req, res) => {
     try {
       const { site, cookies } = req.body;
@@ -754,13 +784,9 @@ function startDashboardServer(database, whatsapp, telegramUser, scheduler, summa
       if (!VALID_SITES.includes(site)) {
         return res.status(400).json({ error: `Invalid site. Must be one of: ${VALID_SITES.join(', ')}` });
       }
-      let parsedCookies = cookies;
-      if (typeof cookies === 'string') {
-        try { parsedCookies = JSON.parse(cookies.trim()); }
-        catch (e) { return res.status(400).json({ error: 'Invalid JSON format. Please paste the full cookies array.' }); }
-      }
-      if (!Array.isArray(parsedCookies) || parsedCookies.length === 0) {
-        return res.status(400).json({ error: 'Cookies must be a non-empty JSON array.' });
+      const parsedCookies = parseCookiesInput(cookies);
+      if (!parsedCookies || parsedCookies.length === 0) {
+        return res.status(400).json({ error: 'Invalid cookies format. Paste a JSON array or a Netscape HTTP Cookie File.' });
       }
       database.saveCookies(site, parsedCookies);
       try {
@@ -816,13 +842,9 @@ function startDashboardServer(database, whatsapp, telegramUser, scheduler, summa
       if (!VALID_SITES.includes(site)) {
         return res.status(400).json({ error: 'Invalid site name' });
       }
-      let parsedCookies = cookies;
-      if (typeof cookies === 'string') {
-        try { parsedCookies = JSON.parse(cookies.trim()); }
-        catch (e) { return res.status(400).json({ error: 'Invalid JSON format.' }); }
-      }
-      if (!Array.isArray(parsedCookies)) {
-        return res.status(400).json({ error: 'Cookies must be a valid JSON array.' });
+      const parsedCookies = parseCookiesInput(cookies);
+      if (!parsedCookies || parsedCookies.length === 0) {
+        return res.status(400).json({ error: 'Invalid cookies format. Paste a JSON array or a Netscape HTTP Cookie File.' });
       }
       database.saveCookies(site, parsedCookies);
       // Write to both paths so scrapers and API both find the file

@@ -258,7 +258,10 @@ export default function CookiesPage() {
       >
         <div className="space-y-4">
           <div className="text-sm text-muted-foreground">
-            Paste cookies as a JSON array
+            Paste cookies as a <strong>JSON array</strong> or <strong>Netscape HTTP Cookie File</strong>
+            {importSite === "youtube" && (
+              <span className="block mt-1 text-xs">Tip: YouTube cookies exported via browser extensions are often in Netscape format — paste them directly.</span>
+            )}
           </div>
           <Textarea
             placeholder='[{"name": "session", "value": "abc123", "domain": ".example.com"}]'
