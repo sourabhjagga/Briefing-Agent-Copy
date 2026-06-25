@@ -12,31 +12,48 @@ function esc(str) {
   return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
+const VALID_TAGS = new Set(['b', 'i', 'u', 's', 'a', 'code', 'pre', 'em', 'strong', 'span', 'br', 'p']);
+
 function sanitizeMarkdown(text) {
+    const parts = [];
     const tagStack = [];
-    let result = text.replace(/<\/?[a-z][a-z0-9]*\b[^>]*>/gi, (tag, offset, string) => {
-        const tagName = tag.match(/<\/?([a-z]+)/i)[1].toLowerCase();
+    let lastIdx = 0;
+    const tagRe = /<\/?([a-z][a-z0-9]*)\b[^>]*>/gi;
+    let match;
+
+    while ((match = tagRe.exec(text)) !== null) {
+        if (match.index > lastIdx) {
+            parts.push(esc(text.slice(lastIdx, match.index)));
+        }
+
+        const tag = match[0];
+        const tagName = match[1].toLowerCase();
         const isClosing = tag.startsWith('</');
 
         if (isClosing) {
             if (tagStack.length > 0 && tagStack[tagStack.length - 1] === tagName) {
                 tagStack.pop();
-                return tag;
-            } else {
-                return '';
+                parts.push(tag);
             }
-        } else {
+        } else if (VALID_TAGS.has(tagName)) {
             tagStack.push(tagName);
-            return tag;
+            parts.push(tag);
+        } else {
+            parts.push(esc(tag));
         }
-    });
-    
-    while (tagStack.length > 0) {
-        const unclosedTag = tagStack.pop();
-        result += `</${unclosedTag}>`;
+
+        lastIdx = tagRe.lastIndex;
     }
-    
-    return result;
+
+    if (lastIdx < text.length) {
+        parts.push(esc(text.slice(lastIdx)));
+    }
+
+    while (tagStack.length > 0) {
+        parts.push(`</${tagStack.pop()}>`);
+    }
+
+    return parts.join('');
 }
 
 const MAX_MESSAGE_LENGTH = 4096;

@@ -144,6 +144,18 @@ class DatabaseManager {
       this.db.exec(`ALTER TABLE sources ADD COLUMN category_slug TEXT REFERENCES categories(slug)`);
       logger.info('📊 Migrated: added category_slug column to sources');
     } catch (e) { /* already exists */ }
+
+    // Migrate: add url column to sources for per-target URL storage
+    try {
+      this.db.exec(`ALTER TABLE sources ADD COLUMN url TEXT`);
+      logger.info('📊 Migrated: added url column to sources');
+    } catch (e) { /* already exists */ }
+
+    // Migrate: add is_private column to sources for forum auth tracking
+    try {
+      this.db.exec(`ALTER TABLE sources ADD COLUMN is_private INTEGER DEFAULT 0`);
+      logger.info('📊 Migrated: added is_private column to sources');
+    } catch (e) { /* already exists */ }
   }
 
   /**
@@ -302,24 +314,28 @@ class DatabaseManager {
         LIMIT 1
       `),
       addSource: this.db.prepare(`
-        INSERT INTO sources (name, source_id, type, is_active, category_slug)
-        VALUES (?, ?, ?, 1, ?)
+        INSERT INTO sources (name, source_id, type, is_active, category_slug, url, is_private)
+        VALUES (?, ?, ?, 1, ?, ?, ?)
         ON CONFLICT(source_id) DO UPDATE SET 
           name=excluded.name, 
           type=excluded.type, 
           category_slug=excluded.category_slug,
+          url=excluded.url,
+          is_private=excluded.is_private,
           is_active=1
       `),
       addSourceInactive: this.db.prepare(`
-        INSERT INTO sources (name, source_id, type, is_active)
-        VALUES (?, ?, ?, 0)
+        INSERT INTO sources (name, source_id, type, is_active, url, is_private)
+        VALUES (?, ?, ?, 0, ?, ?)
         ON CONFLICT(source_id) DO UPDATE SET 
           name=excluded.name, 
           type=excluded.type,
+          url=excluded.url,
+          is_private=excluded.is_private,
           is_active=0
       `),
       toggleSource: this.db.prepare(`UPDATE sources SET is_active = ? WHERE id = ?`),
-      updateSource: this.db.prepare(`UPDATE sources SET name = ?, type = ?, category_slug = ? WHERE id = ?`),
+      updateSource: this.db.prepare(`UPDATE sources SET name = ?, type = ?, category_slug = ?, url = ?, is_private = ? WHERE id = ?`),
       updateSourceType: this.db.prepare(`UPDATE sources SET type = ? WHERE id = ?`),
       deleteSource: this.db.prepare(`DELETE FROM sources WHERE id = ?`),
       getAllCategories: this.db.prepare(`SELECT * FROM categories ORDER BY created_at ASC`),
@@ -499,10 +515,16 @@ class DatabaseManager {
     );
   }
 
-  addSource(name, sourceId, type, categorySlug = null) { this.statements.addSource.run(name, sourceId, type, categorySlug); }
-  addSourceInactive(name, sourceId, type) { this.statements.addSourceInactive.run(name, sourceId, type); }
+  addSource(name, sourceId, type, categorySlug = null, url = null, isPrivate = 0) {
+    this.statements.addSource.run(name, sourceId, type, categorySlug, url || null, isPrivate);
+  }
+  addSourceInactive(name, sourceId, type, url = null, isPrivate = 0) {
+    this.statements.addSourceInactive.run(name, sourceId, type, url || null, isPrivate);
+  }
   toggleSource(id, isActive) { this.statements.toggleSource.run(isActive ? 1 : 0, id); }
-  updateSource(id, name, type, categorySlug = null) { this.statements.updateSource.run(name, type, categorySlug, id); }
+  updateSource(id, name, type, categorySlug = null, url = null, isPrivate = 0) {
+    this.statements.updateSource.run(name, type, categorySlug, url || null, isPrivate, id);
+  }
   updateSourceType(id, type) { this.statements.updateSourceType.run(type, id); }
   deleteSource(id) { this.statements.deleteSource.run(id); }
   getAllCategories() { return this.statements.getAllCategories.all(); }

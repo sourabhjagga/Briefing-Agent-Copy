@@ -23,7 +23,6 @@ class DealsScraper {
     
     this.isSessionAlerted = false;
     this.consecutiveFailures = 0; // Track consecutive zero-deal scrapes
-    this.targetUrl = 'https://www.desidime.com/forums/hot-deals-online';
   }
 
   async start() {
@@ -44,7 +43,20 @@ class DealsScraper {
   }
 
   async scrapeDesiDime() {
-    logger.info('🔍 Scraping DesiDime Hot Deals via Headless Browser...');
+    logger.info('🔍 Scraping Deals via Headless Browser...');
+
+    // Load target URL from database — no more hardcoded source URLs
+    const dealsSources = this.database.getAllSources()
+      .filter(s => s.is_active && s.type.endsWith('-deals') && s.url);
+
+    if (dealsSources.length === 0) {
+      logger.warn('⚠️ No active deals sources with URLs found in database.');
+      return;
+    }
+
+    const targetUrl = dealsSources[0].url;
+    const sourceName = dealsSources[0].name;
+
     let page = null;
     try {
       // 1. Open new tab inside the shared browser instance
@@ -54,8 +66,8 @@ class DealsScraper {
       await this._injectCookies(page);
 
       // 3. Navigate to target url
-      logger.debug(`Navigating to DesiDime: ${this.targetUrl}`);
-      await page.goto(this.targetUrl, { waitUntil: 'domcontentloaded', timeout: 45000 });
+      logger.debug(`Navigating to deals source: ${targetUrl}`);
+      await page.goto(targetUrl, { waitUntil: 'domcontentloaded', timeout: 45000 });
 
       // 4. Stagger and wait for content/selectors to settle
       // Use a broad selector that covers DesiDime's current and legacy DOM layouts

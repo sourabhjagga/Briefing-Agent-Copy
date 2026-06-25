@@ -181,12 +181,12 @@ function startDashboardServer(database, whatsapp, telegramUser, scheduler, summa
 
   app.post('/api/sources', (req, res) => {
     try {
-      const { name, source_id, type, category_slug } = req.body;
+      const { name, source_id, type, category_slug, url, is_private } = req.body;
       if (!name || !source_id || !type || !category_slug) return res.status(400).json({ error: 'Missing fields (name, source_id, type, category_slug required)' });
       if (!SINGLE_WORD.test(type)) return res.status(400).json({ error: 'Type must be a single lowercase word' });
       if (!SINGLE_WORD.test(category_slug)) return res.status(400).json({ error: 'Category must be a single lowercase word' });
       const effectiveType = `${category_slug}-${type}`;
-      database.addSource(name, source_id.trim(), effectiveType, category_slug);
+      database.addSource(name, source_id.trim(), effectiveType, category_slug, url || null, is_private ? 1 : 0);
       res.json({ success: true });
     } catch (err) {
       res.status(500).json({ error: err.message });
@@ -208,13 +208,13 @@ function startDashboardServer(database, whatsapp, telegramUser, scheduler, summa
     try {
       const id = parseIdParam(req.params.id);
       if (!id) return res.status(400).json({ error: 'Invalid ID' });
-      const { name, type, category_slug, is_active } = req.body;
+      const { name, type, category_slug, is_active, url, is_private } = req.body;
       if (type && !SINGLE_WORD.test(type)) return res.status(400).json({ error: 'Type must be a single lowercase word' });
       if (category_slug && !SINGLE_WORD.test(category_slug)) return res.status(400).json({ error: 'Category must be a single lowercase word' });
       if (is_active !== undefined) {
         database.toggleSource(id, is_active);
       }
-      if (name !== undefined || type !== undefined || category_slug !== undefined) {
+      if (name !== undefined || type !== undefined || category_slug !== undefined || url !== undefined || is_private !== undefined) {
         const source = database.getAllSources().find(s => s.id === id);
         if (source) {
           const finalType = type || source.type;
@@ -222,7 +222,9 @@ function startDashboardServer(database, whatsapp, telegramUser, scheduler, summa
           const effectiveType = finalCategorySlug && !finalType.startsWith(finalCategorySlug + '-')
             ? `${finalCategorySlug}-${finalType}`
             : finalType;
-          database.updateSource(id, name || source.name, effectiveType, finalCategorySlug);
+          const finalUrl = url !== undefined ? url : source.url;
+          const finalIsPrivate = is_private !== undefined ? (is_private ? 1 : 0) : source.is_private;
+          database.updateSource(id, name || source.name, effectiveType, finalCategorySlug, finalUrl, finalIsPrivate);
         }
       }
       res.json({ success: true });
@@ -860,16 +862,18 @@ async function main() {
   const summarizer = new Summarizer(process.env.GEMINI_API_KEY, process.env.OPENROUTER_API_KEY);
   const botInstances = createBotInstances(database, summarizer);
 
-  // Seed hardcoded scraper sources so they appear in the Sources dashboard
+  // Seed scraper sources from database so the Sources dashboard is the single source of truth
   const systemSources = [
-    { name: 'Technofino Forum', source_id: 'technofino', type: 'cc-forum', category_slug: 'cc' },
-    { name: 'DesiDime Deals', source_id: 'desidime', type: 'deals-forum', category_slug: 'deals' },
-    { name: 'Reddit (CC)', source_id: 'reddit', type: 'cc-reddit', category_slug: 'cc' },
+    { name: 'Technofino VIP Lounge',             source_id: 'technofino',   type: 'cc-forum',   category_slug: 'cc',    url: 'https://technofino.in/community/forums/vip-credit-card-lounge.30/',                       is_private: 1 },
+    { name: 'Technofino Credit Cards Hub',        source_id: 'technofino2',  type: 'cc-forum',   category_slug: 'cc',    url: 'https://technofino.in/community/categories/credit-cards.42/',                                 is_private: 0 },
+    { name: 'Technofino Recent Posts',            source_id: 'technofino3',  type: 'cc-forum',   category_slug: 'cc',    url: 'https://technofino.in/community/whats-new/posts/',                                           is_private: 0 },
+    { name: 'DesiDime Deals',                     source_id: 'desidime',     type: 'deals-forum', category_slug: 'deals', url: 'https://www.desidime.com/forums/hot-deals-online',                                               is_private: 0 },
+    { name: 'Reddit (r/CreditCardsIndia)',         source_id: 'reddit',       type: 'cc-reddit',  category_slug: 'cc',    url: 'https://www.reddit.com/r/CreditCardsIndia/',                                                    is_private: 0 },
   ];
   for (const src of systemSources) {
     const existing = database.getAllSources().find(s => s.source_id === src.source_id);
     if (!existing) {
-      database.addSource(src.name, src.source_id, src.type, src.category_slug);
+      database.addSource(src.name, src.source_id, src.type, src.category_slug, src.url, src.is_private);
       logger.info(`🌱 Seeded scraper source: ${src.name} (${src.source_id})`);
     }
   }

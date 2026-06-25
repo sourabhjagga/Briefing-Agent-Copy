@@ -21,6 +21,8 @@ interface Source {
   type: string;
   is_active: boolean;
   category_slug: string | null;
+  url: string | null;
+  is_private: number;
 }
 
 interface Category {
@@ -48,7 +50,7 @@ export default function SourcesPage() {
   const [editTypeId, setEditTypeId] = useState<number | null>(null);
   const [editTypeValue, setEditTypeValue] = useState("");
   const [deleteId, setDeleteId] = useState<number | null>(null);
-  const [form, setForm] = useState({ name: "", source_id: "", type: "", category_slug: "" });
+  const [form, setForm] = useState({ name: "", source_id: "", type: "", category_slug: "", url: "", is_private: false });
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
@@ -78,19 +80,19 @@ export default function SourcesPage() {
   }
 
   const createMutation = useMutation({
-    mutationFn: (body: { name: string; source_id: string; type: string; category_slug?: string }) =>
+    mutationFn: (body: { name: string; source_id: string; type: string; category_slug?: string; url?: string; is_private?: number }) =>
       apiRequest("/api/sources", { method: "POST", body: JSON.stringify(body) }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["sources"] });
       setAddOpen(false);
-      setForm({ name: "", source_id: "", type: sourceTypes[0]?.slug || "", category_slug: categories[0]?.slug || "" });
+      setForm({ name: "", source_id: "", type: sourceTypes[0]?.slug || "", category_slug: categories[0]?.slug || "", url: "", is_private: false });
       toast("Source created", "success");
     },
     onError: (err: Error) => toast(err.message, "error"),
   });
 
   const updateMutation = useMutation({
-    mutationFn: ({ id, data }: { id: number; data: { name?: string; type?: string; category_slug?: string | null } }) =>
+    mutationFn: ({ id, data }: { id: number; data: { name?: string; type?: string; category_slug?: string | null; url?: string; is_private?: number } }) =>
       apiRequest(`/api/sources/${id}`, {
         method: "PATCH",
         body: JSON.stringify(data),
@@ -213,6 +215,21 @@ export default function SourcesPage() {
         ),
     },
     {
+      key: "url",
+      header: "URL",
+      sortable: true,
+      render: (item) => (
+        <span className="text-xs text-text-secondary truncate max-w-48 block" title={item.url || ""}>
+          {item.url || "—"}
+        </span>
+      ),
+    },
+    {
+      key: "is_private",
+      header: "Private",
+      render: (item) => item.is_private ? <Badge variant="warning">Yes</Badge> : <span className="text-xs text-text-secondary">No</span>,
+    },
+    {
       key: "is_active",
       header: "Status",
       render: (item) => (
@@ -230,17 +247,17 @@ export default function SourcesPage() {
       className: "w-24",
       render: (item) => (
         <div className="flex items-center gap-1">
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => {
-              setEditingSource(item);
-              setForm({ name: item.name, source_id: item.source_id, type: displayType(item.type), category_slug: item.category_slug || "" });
-              setEditOpen(true);
-            }}
-          >
-            Edit
-          </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => {
+                setEditingSource(item);
+                setForm({ name: item.name, source_id: item.source_id, type: displayType(item.type), category_slug: item.category_slug || "", url: item.url || "", is_private: !!item.is_private });
+                setEditOpen(true);
+              }}
+            >
+              Edit
+            </Button>
           <Button
             variant="ghost"
             size="sm"
@@ -258,13 +275,46 @@ export default function SourcesPage() {
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold">Sources</h1>
         <Button onClick={() => {
-          setForm({ name: "", source_id: "", type: sourceTypes[0]?.slug || "", category_slug: categories[0]?.slug || "" });
+          setForm({ name: "", source_id: "", type: sourceTypes[0]?.slug || "", category_slug: categories[0]?.slug || "", url: "", is_private: false });
           setAddOpen(true);
         }}>
           <Plus className="h-4 w-4" />
           Add Source
         </Button>
       </div>
+
+      <Card className="p-4 space-y-3">
+        <h2 className="font-semibold">How Sources Work</h2>
+        <p className="text-sm text-text-secondary">
+          Every source the agent monitors comes from this table — nothing is hardcoded. Fill in the fields below when adding or editing a source. The scraper reads <code className="bg-surface-alt px-1 rounded">url</code> and <code className="bg-surface-alt px-1 rounded">is_private</code> from each source row at runtime.
+        </p>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
+          <div className="space-y-1">
+            <h3 className="font-medium">Forums</h3>
+            <p className="text-text-secondary">Set <strong>URL</strong> to the forum page URL (e.g. <code className="bg-surface-alt px-1 rounded text-xs">https://technofino.in/community/forums/.../</code>). Toggle <strong>is_private</strong> ON if the forum requires a logged-in session. The scraper alerts when private sources return 0 threads for 2 consecutive runs.</p>
+          </div>
+          <div className="space-y-1">
+            <h3 className="font-medium">Deals</h3>
+            <p className="text-text-secondary">Set <strong>URL</strong> to the deals listing page (e.g. <code className="bg-surface-alt px-1 rounded text-xs">https://www.desidime.com/forums/hot-deals-online</code>). Only the first active deals source is used per run.</p>
+          </div>
+          <div className="space-y-1">
+            <h3 className="font-medium">Reddit</h3>
+            <p className="text-text-secondary">Set <strong>Source ID</strong> to the subreddit name without <code className="bg-surface-alt px-1 rounded text-xs">r/</code> (e.g. <code className="bg-surface-alt px-1 rounded text-xs">CreditCardsIndia</code>). URL is optional but can be the subreddit URL.</p>
+          </div>
+          <div className="space-y-1">
+            <h3 className="font-medium">YouTube</h3>
+            <p className="text-text-secondary">Set <strong>Source ID</strong> to the channel ID or <code className="bg-surface-alt px-1 rounded text-xs">@handle</code>. URL is optional. Channel not found errors are handled gracefully.</p>
+          </div>
+          <div className="space-y-1">
+            <h3 className="font-medium">WhatsApp</h3>
+            <p className="text-text-secondary">Set <strong>Source ID</strong> to the group JID (e.g. <code className="bg-surface-alt px-1 rounded text-xs">120363xxx@g.us</code>). URL is not used.</p>
+          </div>
+          <div className="space-y-1">
+            <h3 className="font-medium">Telegram</h3>
+            <p className="text-text-secondary">Set <strong>Source ID</strong> to the <code className="bg-surface-alt px-1 rounded text-xs">@username</code> or chat ID. URL is not used.</p>
+          </div>
+        </div>
+      </Card>
 
       <Card>
         <DataTable<Source>
@@ -323,12 +373,37 @@ export default function SourcesPage() {
               options={categories.map(c => ({ value: c.slug, label: c.display_name }))}
             />
           </div>
+          <div>
+            <label className="mb-1 block text-sm font-medium">URL</label>
+            <Input
+              value={form.url}
+              onChange={(e) => setForm({ ...form, url: e.target.value })}
+              placeholder="Scraper target URL (forums/deals)"
+            />
+            <p className="mt-1 text-xs text-text-secondary">
+              Required for forums and deals sources. The scraper navigates to this URL to collect posts.
+            </p>
+          </div>
+          <div>
+            <Switch
+              checked={form.is_private}
+              onChange={(checked) => setForm({ ...form, is_private: checked })}
+              label="Requires login (is_private)"
+            />
+          </div>
           <div className="flex justify-end gap-2 pt-2">
             <Button variant="outline" onClick={() => setAddOpen(false)}>
               Cancel
             </Button>
             <Button
-              onClick={() => createMutation.mutate(form)}
+              onClick={() => createMutation.mutate({
+                name: form.name,
+                source_id: form.source_id,
+                type: form.type,
+                category_slug: form.category_slug,
+                url: form.url || undefined,
+                is_private: form.is_private ? 1 : 0,
+              })}
               disabled={!form.name || !form.source_id || !form.type || !form.category_slug || createMutation.isPending}
             >
               {createMutation.isPending ? "Creating..." : "Create"}
@@ -368,12 +443,36 @@ export default function SourcesPage() {
               options={categories.map(c => ({ value: c.slug, label: c.display_name }))}
             />
           </div>
+          <div>
+            <label className="mb-1 block text-sm font-medium">URL</label>
+            <Input
+              value={form.url}
+              onChange={(e) => setForm({ ...form, url: e.target.value })}
+              placeholder="Scraper target URL (forums/deals)"
+            />
+          </div>
+          <div>
+            <Switch
+              checked={form.is_private}
+              onChange={(checked) => setForm({ ...form, is_private: checked })}
+              label="Requires login (is_private)"
+            />
+          </div>
           <div className="flex justify-end gap-2 pt-2">
             <Button variant="outline" onClick={() => { setEditOpen(false); setEditingSource(null); }}>
               Cancel
             </Button>
             <Button
-              onClick={() => editingSource && updateMutation.mutate({ id: editingSource.id, data: { name: form.name, type: form.type, category_slug: form.category_slug } })}
+              onClick={() => editingSource && updateMutation.mutate({
+                id: editingSource.id,
+                data: {
+                  name: form.name,
+                  type: form.type,
+                  category_slug: form.category_slug,
+                  url: form.url || undefined,
+                  is_private: form.is_private ? 1 : 0,
+                }
+              })}
               disabled={!form.name || !form.type || !form.category_slug || updateMutation.isPending}
             >
               {updateMutation.isPending ? "Saving..." : "Save"}

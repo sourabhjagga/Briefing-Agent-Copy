@@ -24,24 +24,6 @@ class ForumScraper {
     
     this.isSessionAlerted = false;
     this.consecutiveVipFailures = 0; // Track consecutive VIP Lounge 0-thread scrapes
-    
-    this.targets = [
-      {
-        name: 'Technofino VIP Lounge',
-        url: 'https://technofino.in/community/forums/vip-credit-card-lounge.30/',
-        isPrivate: true, // Requires login
-      },
-      {
-        name: 'Technofino Credit Cards Hub',
-        url: 'https://technofino.in/community/categories/credit-cards.42/',
-        isPrivate: false,
-      },
-      {
-        name: 'Technofino Recent Posts',
-        url: 'https://technofino.in/community/whats-new/posts/',
-        isPrivate: false,
-      },
-    ];
   }
 
   async start() {
@@ -63,6 +45,17 @@ class ForumScraper {
 
   async scrape() {
     logger.info('🔄 Starting Technofino HTTP scrape session via Headless Browser...');
+
+    // Load targets from database — no more hardcoded source URLs
+    const targets = this.database.getAllSources()
+      .filter(s => s.is_active && s.type.endsWith('-forum') && s.url)
+      .map(s => ({ name: s.name, url: s.url, isPrivate: !!s.is_private }));
+
+    if (targets.length === 0) {
+      logger.warn('⚠️ No active forum sources with URLs found in database.');
+      return;
+    }
+
     let page = null;
     try {
       // 1. Open new tab inside the shared browser instance
@@ -71,7 +64,7 @@ class ForumScraper {
       // 2. Set authenticated cookies inside browser session if available
       await this._injectCookies(page);
 
-      for (const target of this.targets) {
+      for (const target of targets) {
         await this._scrapeTarget(page, target);
         // Stagger requests between 3 and 7 seconds
         const delay = Math.floor(Math.random() * 4000) + 3000;
