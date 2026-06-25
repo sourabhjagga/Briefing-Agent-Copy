@@ -307,6 +307,18 @@ class WhatsAppListener {
     );
     messageData.sourceType = matchingSource ? matchingSource.type : 'cc-whatsapp';
 
+    // get or create source_instance and add FK
+    if (matchingSource) {
+      const instanceId = this.database.ensureSourceInstance(
+        matchingSource.id,
+        matchingSource.type,
+        remoteJid,
+        chatName,
+        isChannel ? 'channel' : 'group'
+      );
+      messageData.instanceFk = instanceId;
+    }
+
     this.database.saveMessage(messageData);
     this.messageCount++;
 

@@ -1,0 +1,6 @@
+[2026-06-25 15:35:11] [INFO] 📊 Migrated: added instance_fk column to messages
+[2026-06-25 15:35:11] [INFO] 📊 Migrated: added category_slug column to sources
+[2026-06-25 15:35:11] [INFO] 📊 Migrated: added url column to sources
+[2026-06-25 15:35:11] [INFO] 📊 Migrated: added is_private column to sources
+[2026-06-25 15:35:11] [INFO] ✅ Database initialized: /tmp/test_mapping.db
+[2026-06-25 15:35:11] [INFO] Database connection closed.
