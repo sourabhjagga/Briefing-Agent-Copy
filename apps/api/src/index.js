@@ -185,21 +185,24 @@ function startDashboardServer(database, whatsapp, telegramUser, scheduler, summa
       for (const h of database.getScraperHealth()) {
         healthMap[h.source_id] = h;
       }
-      const todayCounts = database.getTodayMessageCountBySourceTypeWithNames();
-      const totalCounts = database.getTotalMessageCountBySourceTypeWithNames();
-      const todayMap = {};
-      for (const row of todayCounts) {
-        const key = `${row.source_type}::${row.group_name}`;
-        todayMap[key] = row.count;
+
+      const todayStart = Math.floor(Date.now() / 1000) - 86400;
+      const instanceCounts = database.db.prepare(`
+        SELECT si.source_fk, COUNT(m.id) as message_count,
+               SUM(CASE WHEN m.timestamp >= ? THEN 1 ELSE 0 END) as today_count
+        FROM source_instances si
+        LEFT JOIN messages m ON m.instance_fk = si.id
+        GROUP BY si.source_fk
+      `).all(todayStart);
+
+      const countMap = {};
+      for (const row of instanceCounts) {
+        countMap[row.source_fk] = { message_count: row.message_count, today_count: row.today_count };
       }
-      const totalMap = {};
-      for (const row of totalCounts) {
-        const key = `${row.source_type}::${row.group_name}`;
-        totalMap[key] = (totalMap[key] || 0) + row.count;
-      }
+
       const result = sources.map(s => {
+        const counts = countMap[s.id] || { message_count: 0, today_count: 0 };
         const health = healthMap[s.source_id] || null;
-        const key = `${s.type}::${s.name}`;
         return {
           ...s,
           health_status: health
@@ -207,8 +210,8 @@ function startDashboardServer(database, whatsapp, telegramUser, scheduler, summa
             : 'unknown',
           health_last_attempt: health?.last_attempt || null,
           health_last_error: health?.last_error || null,
-          message_count: totalMap[key] || 0,
-          today_count: todayMap[key] || 0,
+          message_count: counts.message_count,
+          today_count: counts.today_count,
         };
       });
       res.json(result);
