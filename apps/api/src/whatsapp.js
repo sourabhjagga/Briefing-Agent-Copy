@@ -45,9 +45,9 @@ class WhatsAppListener {
       
       this.targetIds = new Set(whatsappSources.map(s => s.source_id.trim().toLowerCase()));
 
-      // Seed manually added database source names into chatNameMap dynamically
+      // Seed only WhatsApp sources' names into chatNameMap dynamically
       let updated = false;
-      allSources.forEach(s => {
+      whatsappSources.forEach(s => {
         if (s.source_id && s.name) {
           const id = s.source_id.trim().toLowerCase();
           if (!this.chatNameMap[id]) {

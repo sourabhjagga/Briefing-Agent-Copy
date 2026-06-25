@@ -171,10 +171,14 @@ class TelegramUserListener {
 
   _saveSession() {
     try {
-      const sessionString = this.client.session.save();
-      if (sessionString) {
-        fs.writeFileSync(this.sessionPath, sessionString, 'utf8');
-        logger.info('💾 Telegram session saved to disk');
+      const sessionString = this.session.save();
+      if (sessionString && sessionString.length > 20) {
+        const tmp = this.sessionPath + '.tmp';
+        fs.writeFileSync(tmp, sessionString, 'utf8');
+        fs.renameSync(tmp, this.sessionPath);
+        logger.info(`💾 Telegram session saved (${sessionString.length} chars)`);
+      } else {
+        logger.warn(`⚠️ Telegram _saveSession skipped: ${sessionString ? 'too short (' + sessionString.length + ' chars)' : 'empty string'}`);
       }
     } catch (err) {
       logger.error(`Failed to save Telegram session: ${err.message}`);

@@ -74,9 +74,8 @@ export default function CookiesPage() {
 
   const deleteMutation = useMutation({
     mutationFn: (site: string) =>
-      apiRequest("/api/cookies/delete", {
-        method: "POST",
-        body: JSON.stringify({ site }),
+      apiRequest(`/api/cookies/${encodeURIComponent(site)}`, {
+        method: "DELETE",
       }),
     onSuccess: () => {
       invalidate();

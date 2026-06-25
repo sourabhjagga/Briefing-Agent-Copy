@@ -74,6 +74,19 @@ export default function Dashboard() {
 
   const scraperStatsMap = new Map(stats?.scraperStats.map(s => [s.source_type, s]));
 
+  const groupedHealth = scraperHealth?.reduce<Record<string, ScraperHealth[]>>((acc, s) => {
+    (acc[s.source_type] ??= []).push(s);
+    return acc;
+  }, {});
+  const healthSummary = Object.entries(groupedHealth || {}).map(([type, rows]) => ({
+    source_type: type,
+    total: rows.length,
+    healthy: rows.filter(r => r.error_count === 0).length,
+    totalErrors: rows.reduce((sum, r) => sum + r.error_count, 0),
+    lastSuccess: rows.reduce((latest, r) => r.last_success > latest ? r.last_success : latest, ''),
+    lastAttempt: rows.reduce((latest, r) => r.last_attempt > latest ? r.last_attempt : latest, ''),
+  }));
+
   const formatTimeAgo = formatTimestamp;
 
   return (
@@ -214,8 +227,9 @@ export default function Dashboard() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b">
-                  <th className="text-left py-3 px-4 font-medium">Source</th>
-                  <th className="text-left py-3 px-4 font-medium">Type</th>
+                  <th className="text-left py-3 px-4 font-medium">Category</th>
+                  <th className="text-left py-3 px-4 font-medium">Sources</th>
+                  <th className="text-left py-3 px-4 font-medium">Healthy</th>
                   <th className="text-left py-3 px-4 font-medium">Msgs Collected</th>
                   <th className="text-left py-3 px-4 font-medium">In Last Brief</th>
                   <th className="text-left py-3 px-4 font-medium">Last Success</th>
@@ -225,20 +239,24 @@ export default function Dashboard() {
                 </tr>
               </thead>
               <tbody>
-                {scraperHealth?.
+                {healthSummary.
                   filter((s) =>
-                    s.source_id.toLowerCase().includes(searchTerm.toLowerCase()) ||
                     s.source_type.toLowerCase().includes(searchTerm.toLowerCase())
                   )
                   .map((s) => {
                     const ss = scraperStatsMap.get(s.source_type);
                     return (
-                    <tr key={s.source_id} className="border-b hover:bg-surface-2">
-                      <td className="py-3 px-4 font-mono text-xs">{s.source_id}</td>
+                    <tr key={s.source_type} className="border-b hover:bg-surface-2">
                       <td className="py-3 px-4">
                         <Badge variant="info" className="text-xs">
                           {s.source_type}
                         </Badge>
+                      </td>
+                      <td className="py-3 px-4 text-muted-foreground font-medium">
+                        {s.total}
+                      </td>
+                      <td className="py-3 px-4 text-muted-foreground font-medium">
+                        {s.healthy}
                       </td>
                       <td className="py-3 px-4 text-muted-foreground font-medium">
                         {ss?.total?.toLocaleString() || '0'}
@@ -247,15 +265,15 @@ export default function Dashboard() {
                         {ss?.today?.toLocaleString() || '0'}
                       </td>
                       <td className="py-3 px-4 text-muted-foreground">
-                        {s.last_success ? formatTimeAgo(s.last_success) : '\u2014'}
+                        {s.lastSuccess ? formatTimeAgo(s.lastSuccess) : '\u2014'}
                       </td>
                       <td className="py-3 px-4 text-muted-foreground">
-                        {s.last_attempt ? formatTimeAgo(s.last_attempt) : '\u2014'}
+                        {s.lastAttempt ? formatTimeAgo(s.lastAttempt) : '\u2014'}
                       </td>
                       <td className="py-3 px-4">
-                        {s.error_count > 0 ? (
+                        {s.totalErrors > 0 ? (
                           <span className="text-destructive font-medium">
-                            {s.error_count}
+                            {s.totalErrors}
                           </span>
                         ) : (
                           <span className="text-success">0</span>
@@ -263,10 +281,10 @@ export default function Dashboard() {
                       </td>
                       <td className="py-3 px-4">
                         <Badge
-                          variant={s.error_count === 0 ? 'success' : 'destructive'}
+                          variant={s.healthy === s.total ? 'success' : s.healthy > 0 ? 'warning' : 'destructive'}
                           className="text-xs"
                         >
-                          {s.error_count === 0 ? 'Healthy' : 'Errors'}
+                          {s.healthy === s.total ? 'All Healthy' : s.healthy > 0 ? 'Partial' : 'All Errors'}
                         </Badge>
                       </td>
                     </tr>
