@@ -14,7 +14,7 @@ class TelegramUserListener {
   constructor(database, onAlert) {
     this.database = database;
     this.onAlert = onAlert;
-    this.sessionPath = path.resolve(__dirname, '../data/telegram_user_session.txt');
+    this.sessionPath = '/app/data/telegram_user_session.txt';
     
     // Load API credentials strictly from environment — no hardcoded fallbacks.
     // Ensure TELEGRAM_API_ID and TELEGRAM_API_HASH are set in your .env file.

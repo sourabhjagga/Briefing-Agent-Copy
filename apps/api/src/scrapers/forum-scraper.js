@@ -49,7 +49,7 @@ class ForumScraper {
     // Load targets from database — no more hardcoded source URLs
     const targets = this.database.getAllSources()
       .filter(s => s.is_active && s.type.endsWith('-forum') && s.url)
-      .map(s => ({ name: s.name, url: s.url, isPrivate: !!s.is_private }));
+      .map(s => ({ name: s.name, url: s.url, isPrivate: !!s.is_private, source_id: s.source_id, source_type: s.type }));
 
     if (targets.length === 0) {
       logger.warn('⚠️ No active forum sources with URLs found in database.');
@@ -214,8 +214,15 @@ class ForumScraper {
           sourceType: 'cc-forum'
         });
       }
+
+      this.database.upsertScraperHealth(
+        target.source_id, target.source_type,
+        items.length > 0,
+        items.length === 0 ? '0 threads found' : null
+      );
     } catch (err) {
       logger.error(`Failed to scrape Technofino target "${target.name}": ${err.message}`);
+      this.database.upsertScraperHealth(target.source_id, target.source_type, false, err.message);
     }
   }
 

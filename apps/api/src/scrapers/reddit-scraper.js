@@ -64,6 +64,12 @@ class RedditScraper {
         success = await this._scrapeViaRSS(sub, source.type, source.name);
       }
 
+      this.database.upsertScraperHealth(
+        source.source_id, source.type,
+        success,
+        success ? null : 'All Reddit ingestion layers failed'
+      );
+
       if (!success) {
         logger.error(`❌ All Reddit ingestion layers failed for r/${sub}`);
       }

@@ -23,6 +23,10 @@ interface Source {
   category_slug: string | null;
   url: string | null;
   is_private: number;
+  health_status?: string;
+  health_last_error?: string;
+  message_count?: number;
+  today_count?: number;
 }
 
 interface Category {
@@ -54,10 +58,19 @@ export default function SourcesPage() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
-  const { data: sources = [], isLoading } = useQuery<Source[]>({
+  const { data: sourcesRaw = [], isLoading } = useQuery<Source[]>({
     queryKey: ["sources"],
     queryFn: () => apiRequest<Source[]>("/api/sources"),
   });
+
+  const { data: sourceStats = [] } = useQuery<Source[]>({
+    queryKey: ["source-stats"],
+    queryFn: () => apiRequest<Source[]>("/api/source-stats"),
+    refetchInterval: 60_000,
+  });
+
+  const statsMap = new Map(sourceStats.map(s => [s.id, s]));
+  const sources = sourcesRaw.map(s => ({ ...s, ...statsMap.get(s.id) }));
 
   const { data: categories = [] } = useQuery<Category[]>({
     queryKey: ["categories"],
@@ -146,7 +159,7 @@ export default function SourcesPage() {
   });
 
   const columns: Column<Source>[] = [
-    { key: "id", header: "ID", sortable: true, className: "w-16" },
+    { key: "id", header: "ID", sortable: true, className: "w-16", render: (item) => <span title="Database row ID">{item.id}</span> },
     { key: "name", header: "Name", sortable: true },
     {
       key: "source_id",
@@ -231,7 +244,7 @@ export default function SourcesPage() {
     },
     {
       key: "is_active",
-      header: "Status",
+      header: "Active",
       render: (item) => (
         <Switch
           checked={item.is_active}
@@ -240,6 +253,31 @@ export default function SourcesPage() {
           }
         />
       ),
+    },
+    {
+      key: "health_status",
+      header: "Health",
+      sortable: true,
+      render: (item) => {
+        const badgeVariant = item.health_status === "healthy" ? "success" as const
+          : item.health_status === "warning" ? "warning" as const
+          : item.health_status === "error" ? "destructive" as const
+          : "secondary" as const;
+        const label = item.health_status === "healthy" ? "OK"
+          : item.health_status === "warning" ? "Degraded"
+          : item.health_status === "error" ? "Failing"
+          : item.health_status === "unknown" ? "—" : "—";
+        return (
+          <div className="flex items-center gap-2">
+            <Badge variant={badgeVariant} title={item.health_last_error || ""}>{label}</Badge>
+            <span className="text-xs text-text-secondary">
+              {item.today_count != null && (
+                <span title={`${item.message_count} total messages`}>{item.today_count}</span>
+              )}
+            </span>
+          </div>
+        );
+      },
     },
     {
       key: "id",
@@ -307,7 +345,7 @@ export default function SourcesPage() {
           </div>
           <div className="space-y-1">
             <h3 className="font-medium">WhatsApp</h3>
-            <p className="text-text-secondary">Set <strong>Source ID</strong> to the group JID (e.g. <code className="bg-surface-alt px-1 rounded text-xs">120363xxx@g.us</code>). URL is not used.</p>
+            <p className="text-text-secondary">Set <strong>Source ID</strong> to the group JID (<code className="bg-surface-alt px-1 rounded text-xs">120363xxx@g.us</code>) or newsletter/channel JID (<code className="bg-surface-alt px-1 rounded text-xs">120363xxx@newsletter</code>). URL is not used.</p>
           </div>
           <div className="space-y-1">
             <h3 className="font-medium">Telegram</h3>

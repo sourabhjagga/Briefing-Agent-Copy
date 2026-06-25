@@ -106,11 +106,20 @@ class YoutubeScraper {
         let transcript = '';
         let summary = '';
 
-        // Step 1: Try fetching standard subtitles/transcript
+        // Step 0: Direct HTTP caption fetch (most reliable, no yt-dlp)
         try {
-          transcript = await this.fetchTranscript(video.id);
+          transcript = await this.fetchTranscriptDirect(video.id);
         } catch (err) {
-          logger.warn(`Subtitles disabled or unavailable for video ${video.id}.`);
+          logger.debug(`Direct caption fetch failed for ${video.id}: ${err.message}`);
+        }
+
+        // Step 1: Try yt-dlp subtitle/transcript download (backup)
+        if (!transcript || transcript.length < 100) {
+          try {
+            transcript = await this.fetchTranscript(video.id);
+          } catch (err) {
+            logger.warn(`yt-dlp subtitle fetch unavailable for video ${video.id}.`);
+          }
         }
 
         // Step 2: Gemini Audio Fallback if standard subtitles failed or returned empty
@@ -127,13 +136,13 @@ class YoutubeScraper {
         try {
           if (transcript && transcript.length > 50) {
             summary = await this.summarizer.summarizeYoutubeVideo(video.title, transcript, source.type);
-          } else {
-            logger.warn(`⚠️ Transcript empty. Summarizing using title only.`);
-            summary = await this.summarizer.summarizeYoutubeVideo(video.title, '[No transcript available]', source.type);
           }
         } catch (sumErr) {
           logger.error(`Error summarizing video ${video.id}: ${sumErr.message}`);
-          summary = `(Transcript unavailable)\nThis video covers: "${video.title}"`;
+        }
+
+        if (!summary || summary.includes('Failed to generate')) {
+          summary = `📄 <b>New video published:</b> ${video.title}\n🔗 https://youtu.be/${video.id}`;
         }
 
         this.database.saveMessage({
@@ -153,8 +162,15 @@ class YoutubeScraper {
 
         logger.info(`✅ Successfully processed video summary for "${video.title}"`);
       }
+
+      this.database.upsertScraperHealth(
+        source.source_id, source.type,
+        videos.length > 0,
+        videos.length === 0 ? 'No videos found in RSS feed' : null
+      );
     } catch (err) {
       logger.error(`Error scraping channel ${source.name}: ${err.message}`);
+      this.database.upsertScraperHealth(source.source_id, source.type, false, err.message);
     }
   }
 
@@ -358,6 +374,79 @@ Provide a complete, long text explanation (~500 words) of the video content.`;
     return videos;
   }
 
+  /**
+   * LAYER 0: Direct HTTP transcript fetch (no yt-dlp, no cookies needed).
+   * Fetches the video page, extracts the player response JSON, and fetches
+   * captions directly from YouTube's caption API endpoint.
+   */
+  async fetchTranscriptDirect(videoId) {
+    logger.debug(`Fetching captions directly via HTTP for: ${videoId}`);
+    const videoUrl = `https://www.youtube.com/watch?v=${videoId}`;
+    const res = await axios.get(videoUrl, {
+      headers: { 'User-Agent': this.userAgent, 'Accept-Language': 'en-US,en;q=0.9' },
+      timeout: 15000
+    });
+    const html = res.data;
+
+    let playerResponse = null;
+    const match = html.match(/ytInitialPlayerResponse\s*=\s*({.*?});\s*(?:var\s|<\/script|\n)/);
+    if (match) {
+      try { playerResponse = JSON.parse(match[1]); } catch (e) { /* ignore */ }
+    }
+
+    if (!playerResponse) {
+      const fallback = html.match(/"captions":\s*({.*?}),\s*"videoDetails/);
+      if (fallback) {
+        try {
+          const captionsPart = JSON.parse(`{${fallback[1]}}`);
+          playerResponse = { captions: captionsPart };
+        } catch (e) { /* ignore */ }
+      }
+    }
+
+    if (!playerResponse?.captions?.playerCaptionsTracklistRenderer?.captionTracks) {
+      throw new Error('No caption tracks found in YouTube page data');
+    }
+
+    const tracks = playerResponse.captions.playerCaptionsTracklistRenderer.captionTracks;
+    const prefLangs = ['en', 'hi', 'en-US', 'en-GB'];
+    let bestTrack = null;
+    for (const lang of prefLangs) {
+      bestTrack = tracks.find(t => t.languageCode === lang);
+      if (bestTrack) break;
+    }
+    if (!bestTrack) bestTrack = tracks[0];
+    if (!bestTrack) throw new Error('No suitable caption track found');
+
+    let baseUrl = bestTrack.baseUrl;
+    if (baseUrl.includes('&fmt=') || !baseUrl.includes('fmt=')) {
+      baseUrl += (baseUrl.includes('?') ? '&' : '?') + 'fmt=srv3';
+    }
+    const captionRes = await axios.get(baseUrl, {
+      headers: { 'User-Agent': this.userAgent },
+      timeout: 15000
+    });
+
+    const xml = captionRes.data;
+    const textSegments = xml.match(/<text[^>]*>(.*?)<\/text>/g) || [];
+    const lines = textSegments.map(seg => {
+      const textMatch = seg.match(/<text[^>]*>(.*?)<\/text>/);
+      if (!textMatch) return '';
+      return textMatch[1]
+        .replace(/&amp;/g, '&')
+        .replace(/&lt;/g, '<')
+        .replace(/&gt;/g, '>')
+        .replace(/&#39;/g, "'")
+        .replace(/&quot;/g, '"')
+        .replace(/<[^>]*>/g, '')
+        .trim();
+    }).filter(Boolean);
+
+    const text = lines.join('\n');
+    logger.debug(`✅ Direct caption fetch succeeded (~${text.length} chars, language: ${bestTrack.languageCode})`);
+    return text;
+  }
+
   async fetchTranscript(videoId) {
     logger.debug(`Fetching subtitles via yt-dlp --write-subs for: ${videoId}`);
 
@@ -377,6 +466,7 @@ Provide a complete, long text explanation (~500 words) of the video content.`;
       '--no-warnings',
       '--quiet',
       '--no-progress',
+      '--extractor-retries', '3',
       '--output', outputTemplate
     ];
 

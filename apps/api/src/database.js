@@ -282,6 +282,19 @@ class DatabaseManager {
         GROUP BY source_type
         ORDER BY count DESC
       `),
+      getTodayMessageCountBySourceTypeWithNames: this.db.prepare(`
+        SELECT source_type, group_name, COUNT(*) as count
+        FROM messages
+        WHERE timestamp >= ?
+        GROUP BY source_type, group_name
+        ORDER BY count DESC
+      `),
+      getTotalMessageCountBySourceTypeWithNames: this.db.prepare(`
+        SELECT source_type, group_name, COUNT(*) as count
+        FROM messages
+        GROUP BY source_type, group_name
+        ORDER BY count DESC
+      `),
       getTotalWhatsAppMessages: this.db.prepare(`
         SELECT COUNT(*) as count FROM messages WHERE source_type LIKE ?
       `),
@@ -487,6 +500,14 @@ class DatabaseManager {
 
   getTodayMessageCountBySourceType() {
     return this.statements.getTodayMessageCountBySourceType.all(this._istDayStart());
+  }
+
+  getTodayMessageCountBySourceTypeWithNames() {
+    return this.statements.getTodayMessageCountBySourceTypeWithNames.all(this._istDayStart());
+  }
+
+  getTotalMessageCountBySourceTypeWithNames() {
+    return this.statements.getTotalMessageCountBySourceTypeWithNames.all();
   }
 
   getTotalWhatsAppMessages() {

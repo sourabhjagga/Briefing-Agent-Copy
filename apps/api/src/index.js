@@ -177,6 +177,45 @@ function startDashboardServer(database, whatsapp, telegramUser, scheduler, summa
     }
   });
 
+  app.get('/api/source-stats', (req, res) => {
+    try {
+      const sources = database.getAllSources();
+      const healthMap = {};
+      for (const h of database.getScraperHealth()) {
+        healthMap[h.source_id] = h;
+      }
+      const todayCounts = database.getTodayMessageCountBySourceTypeWithNames();
+      const totalCounts = database.getTotalMessageCountBySourceTypeWithNames();
+      const todayMap = {};
+      for (const row of todayCounts) {
+        const key = `${row.source_type}::${row.group_name}`;
+        todayMap[key] = row.count;
+      }
+      const totalMap = {};
+      for (const row of totalCounts) {
+        const key = `${row.source_type}::${row.group_name}`;
+        totalMap[key] = (totalMap[key] || 0) + row.count;
+      }
+      const result = sources.map(s => {
+        const health = healthMap[s.source_id] || null;
+        const key = `${s.type}::${s.name}`;
+        return {
+          ...s,
+          health_status: health
+            ? (health.error_count > 3 ? 'error' : health.error_count > 0 ? 'warning' : 'healthy')
+            : 'unknown',
+          health_last_attempt: health?.last_attempt || null,
+          health_last_error: health?.last_error || null,
+          message_count: totalMap[key] || 0,
+          today_count: todayMap[key] || 0,
+        };
+      });
+      res.json(result);
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   const SINGLE_WORD = /^[a-z]+$/;
 
   app.post('/api/sources', (req, res) => {
@@ -875,6 +914,9 @@ async function main() {
     if (!existing) {
       database.addSource(src.name, src.source_id, src.type, src.category_slug, src.url, src.is_private);
       logger.info(`🌱 Seeded scraper source: ${src.name} (${src.source_id})`);
+    } else if (!existing.url && src.url) {
+      database.updateSource(existing.id, existing.name, existing.type, existing.category_slug, src.url, existing.is_private);
+      logger.info(`🔧 Updated source "${src.name}" with URL: ${src.url}`);
     }
   }
 

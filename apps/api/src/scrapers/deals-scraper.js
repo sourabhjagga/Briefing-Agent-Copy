@@ -189,8 +189,17 @@ class DealsScraper {
       }
 
       logger.info(`💾 Saved/Updated ${savedCount} deals in database.`);
+      this.database.upsertScraperHealth(
+        dealsSources[0].source_id, dealsSources[0].type,
+        savedCount > 0,
+        savedCount === 0 ? '0 deals found' : null
+      );
     } catch (err) {
       logger.error(`Error during DesiDime scrape: ${err.message}`);
+      this.database.upsertScraperHealth(
+        dealsSources[0]?.source_id || 'desidime', dealsSources[0]?.type || 'deals-forum',
+        false, err.message
+      );
     } finally {
       if (page) {
         try {
