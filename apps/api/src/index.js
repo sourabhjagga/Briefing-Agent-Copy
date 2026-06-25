@@ -1065,6 +1065,7 @@ async function main() {
     youtube: youtubeScraper,
     api: apiScraper,
     rss: rssScraper,
+    email: emailScraper,
   };
 
   const healthServer = startDashboardServer(
