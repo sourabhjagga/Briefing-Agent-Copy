@@ -14,13 +14,22 @@ const logger = require('./logger');
 /**
  * Determines whether a session error is unrecoverable and requires
  * the auth store to be wiped before reconnecting.
+ * 
+ * "Over 2000 messages into the future" is a RECOVERABLE decryption failure
+ * caused by counter mismatch on historical messages, NOT session key corruption.
+ * It should NOT trigger session wipe.
  */
 function isSessionCorruptionError(err) {
   if (!err || !err.message) return false;
+  const msg = err.message;
+  // Only treat truly fatal session corruption as wipe-worthy
   return (
-    err.message.includes('Bad MAC') ||
-    err.message.includes('Over 2000 messages into the future') ||
-    err.message.includes('SessionError')
+    msg.includes('Bad MAC') ||
+    // REMOVED: "Over 2000 messages into the future" - recoverable counter mismatch
+    // REMOVED: generic "SessionError" - too broad, catches recoverable errors
+    msg.includes('Session corrupted') ||  // Explicit session corruption
+    msg.includes('Invalid session') ||     // Explicit session invalid
+    msg.includes('corrupted session')      // Explicit session corruption
   );
 }
 
@@ -183,7 +192,7 @@ class WhatsAppListener {
         }
       });
 
-      this.sock.ev.on('messaging-history.set', ({ chats, contacts, messages }) => {
+      this.sock.ev.on('messaging-history.set', async ({ chats, contacts, messages }) => {
         let count = 0;
         if (chats && Array.isArray(chats)) {
           chats.forEach(c => {
@@ -217,13 +226,20 @@ class WhatsAppListener {
         if (messages && Array.isArray(messages)) {
             for (const msg of messages) {
                 if (!msg.message || msg.key.fromMe) continue;
-                this._processIncomingMessage(msg).catch(err => {
+                try {
+                    await this._processIncomingMessage(msg);
+                } catch (err) {
+                    // Handle "Over 2000 messages into the future" gracefully - skip message, don't wipe session
+                    if (err.message && err.message.includes('Over 2000 messages into the future')) {
+                        logger.warn(`Skipping historical message due to counter mismatch (recoverable): ${err.message}`);
+                        continue;
+                    }
                     if (isSessionCorruptionError(err)) {
                         this._handleSessionCorruption(err.message);
                     } else {
                         logger.error(`Error processing history message: ${err.message}`);
                     }
-                });
+                }
             }
         }
       });
@@ -303,6 +319,11 @@ class WhatsAppListener {
           try {
             await this._processIncomingMessage(msg);
           } catch (err) {
+            // Handle "Over 2000 messages into the future" gracefully - skip message, don't wipe session
+            if (err.message && err.message.includes('Over 2000 messages into the future')) {
+              logger.warn(`Skipping incoming message due to counter mismatch (recoverable): ${err.message}`);
+              continue;
+            }
             if (isSessionCorruptionError(err)) {
               this._handleSessionCorruption(err.message);
               break; // Stop processing further messages; session is being reset
@@ -313,6 +334,11 @@ class WhatsAppListener {
       });
 
     } catch (err) {
+      // Handle "Over 2000 messages into the future" on startup gracefully
+      if (err.message && err.message.includes('Over 2000 messages into the future')) {
+        logger.warn(`Startup counter mismatch (recoverable), continuing: ${err.message}`);
+        return;
+      }
       if (isSessionCorruptionError(err)) {
         this._handleSessionCorruption(err.message);
       } else {
