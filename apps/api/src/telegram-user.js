@@ -11,10 +11,14 @@ const path = require('path');
 const logger = require('./logger');
 
 class TelegramUserListener {
-  constructor(database, onAlert) {
+constructor(database, onAlert) {
     this.database = database;
     this.onAlert = onAlert;
     this.sessionPath = '/app/data/telegram_user_session.txt';
+    
+    // Debounce session saves to prevent excessive I/O
+    this._sessionSaveTimer = null;
+    this._sessionSavePending = false;
     
     // Load API credentials strictly from environment — no hardcoded fallbacks.
     // Ensure TELEGRAM_API_ID and TELEGRAM_API_HASH are set in your .env file.
@@ -34,7 +38,7 @@ class TelegramUserListener {
       initialSession = fs.readFileSync(this.sessionPath, 'utf8').trim();
     }
     
-    const clientOptions = {
+    let clientOptions = {
       connectionRetries: 10,
       requestRetries: 5,
       useWSS: false,
@@ -170,6 +174,18 @@ class TelegramUserListener {
   }
 
   _saveSession() {
+    // Debounce session saves to prevent excessive I/O
+    if (this._sessionSavePending) {
+      clearTimeout(this._sessionSaveTimer);
+    }
+    this._sessionSavePending = true;
+    this._sessionSaveTimer = setTimeout(() => {
+      this._sessionSavePending = false;
+      this._doSaveSession();
+    }, 2000); // 2s debounce
+  }
+
+  _doSaveSession() {
     try {
       const sessionString = this.session.save();
       if (sessionString && sessionString.length > 20) {
@@ -188,9 +204,6 @@ class TelegramUserListener {
   async _attachListener() {
     if (this.isListening) return;
     const { NewMessage, Raw } = require('telegram/events');
-    const { UpdateConnectionState } = require('telegram/network');
-
-    this.client.addEventHandler(() => this._saveSession(), new Raw({ types: [UpdateConnectionState] }));
 
     this.client.addEventHandler(async (event) => {
       try {

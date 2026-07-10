@@ -49,6 +49,23 @@ class WhatsAppListener {
     // Guard flag to prevent concurrent session-wipe+restart cycles
     this._sessionWipeInProgress = false;
     
+    // Hardened Baileys: reconnection state
+    this._reconnectAttempts = 0;
+    this._maxReconnectAttempts = 10;
+    this._baseReconnectDelay = 10000;    // 10s initial
+    this._maxReconnectDelay = 300000;    // 5min max
+    this._backoffMultiplier = 2;         // exponential backoff
+    this._lastReconnectTime = 0;
+    this._minReconnectInterval = 5000;   // min 5s between reconnects
+    
+    // QR code cooldown to prevent rapid QR regeneration
+    this._lastQrGenerated = 0;
+    this._qrCooldownMs = 60000;          // 1min between QR generations
+    
+    // Connection health monitoring
+    this._healthCheckInterval = null;
+    this._lastHealthCheck = 0;
+    
     // Load cached chat names
     if (fs.existsSync(this.chatNameMapFile)) {
       try {
@@ -59,6 +76,99 @@ class WhatsAppListener {
     }
 
     this._refreshTargets();
+  }
+
+  /**
+   * Calculate exponential backoff delay for reconnection
+   */
+  _getReconnectDelay() {
+    const now = Date.now();
+    
+    // Respect minimum interval between reconnects
+    if (now - this._lastReconnectTime < 5000) {
+      this._reconnectAttempts = Math.max(0, this._reconnectAttempts - 1);
+    }
+    
+    // Cap attempts
+    if (this._reconnectAttempts >= 10) {
+      logger.warn('Max reconnect attempts (10) reached. Resetting counter.');
+      this._reconnectAttempts = 0;
+    }
+    
+    const delay = Math.min(
+      10000 * Math.pow(2, this._reconnectAttempts),
+      300000
+    );
+    
+    this._reconnectAttempts++;
+    this._lastReconnectTime = now;
+    return delay;
+  }
+
+  /**
+   * Start connection health monitoring
+   */
+  _startHealthCheck() {
+    if (this._healthCheckInterval) {
+      clearInterval(this._healthCheckInterval);
+    }
+    this._healthCheckInterval = setInterval(() => {
+      this._performHealthCheck();
+    }, 60000); // Check every 60s
+  }
+
+  /**
+   * Stop health monitoring
+   */
+  _stopHealthCheck() {
+    if (this._healthCheckInterval) {
+      clearInterval(this._healthCheckInterval);
+      this._healthCheckInterval = null;
+    }
+  }
+
+  /**
+   * Perform connection health check
+   */
+  _performHealthCheck() {
+    if (!this.sock || !this.isReady) return;
+    
+    const now = Date.now();
+    if (now - this._lastHealthCheck < 30000) return;
+    this._lastHealthCheck = now;
+    
+    try {
+      if (this.sock.ws && this.sock.ws.readyState !== 1) {
+        logger.warn('WebSocket connection stale (readyState !== OPEN), forcing reconnect...');
+        this.sock.end(new Error('health-check-stale-connection')).catch(() => {});
+        this.isReady = false;
+        this.start();
+      }
+    } catch (e) {
+      logger.debug(`Health check error: ${e.message}`);
+    }
+  }
+
+  /**
+   * Check if QR code generation should be rate limited
+   */
+  _shouldGenerateQr() {
+    const now = Date.now();
+    if (now - this._lastQrGenerated < this._qrCooldownMs) {
+      logger.warn(`QR code generation rate limited (cooldown: ${this._qrCooldownMs/1000}s)`);
+      return false;
+    }
+    this._lastQrGenerated = now;
+    return true;
+  }
+
+  /**
+   * Reset reconnection state on successful connection
+   */
+  _resetReconnectState() {
+    this._reconnectAttempts = 0;
+    this._lastReconnectTime = 0;
+    this._startHealthCheck();
   }
 
   /**
@@ -87,6 +197,7 @@ class WhatsAppListener {
       logger.error(`Failed to clear auth path during session corruption recovery: ${err.message}`);
     }
     this.isReady = false;
+    this._reconnectAttempts = 0; // Reset reconnection attempts after wipe
     setTimeout(() => {
       this._sessionWipeInProgress = false;
       logger.info('Restarting WhatsApp socket in clean state after session corruption...');
@@ -248,16 +359,21 @@ class WhatsAppListener {
         const { connection, lastDisconnect, qr } = update;
 
         if (qr) {
-          logger.info('========================================');
-          logger.info('  SCAN THIS QR CODE WITH YOUR WHATSAPP');
-          logger.info('========================================');
-          qrcode.generate(qr, { small: true });
-          qrcode.generate(qr, { small: true });
-          this.latestQr = qr;
+          // Rate limit QR code generation to prevent spam
+          if (!this._shouldGenerateQr()) {
+            logger.warn('QR code generation rate limited - skipping');
+          } else {
+            logger.info('========================================');
+            logger.info('  SCAN THIS QR CODE WITH YOUR WHATSAPP');
+            logger.info('========================================');
+            qrcode.generate(qr, { small: true });
+            qrcode.generate(qr, { small: true });
+            this.latestQr = qr;
 
-          const adminJid = process.env.WHATSAPP_ADMIN_JID;
-          if (adminJid) {
-            this.sendMessage(adminJid, `New WhatsApp QR code generated. Please scan to continue.`);
+            const adminJid = process.env.WHATSAPP_ADMIN_JID;
+            if (adminJid) {
+              this.sendMessage(adminJid, `New WhatsApp QR code generated. Please scan to continue.`);
+            }
           }
         }
 
@@ -284,7 +400,9 @@ class WhatsAppListener {
           }
 
           if (shouldReconnect) {
-            setTimeout(() => this.start(), 10000);
+            const delay = this._getReconnectDelay();
+            logger.info(`WhatsApp reconnecting in ${Math.round(delay/1000)}s (attempt ${this._reconnectAttempts}/${this._maxReconnectAttempts})...`);
+            setTimeout(() => this.start(), delay);
           } else {
             logger.error('WhatsApp session logged out. Automatically clearing session and generating fresh QR code...');
             try {
@@ -304,6 +422,7 @@ class WhatsAppListener {
           this.isReady = true;
           this.isSessionAlerted = false;
           this.latestQr = null;
+          this._resetReconnectState(); // Reset reconnect state & start health check
           logger.info('WhatsApp socket client successfully connected!');
           await this._discoverChats();
         }

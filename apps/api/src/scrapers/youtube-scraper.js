@@ -89,10 +89,30 @@ class YoutubeScraper {
 
       logger.info(`📡 Scraping YouTube RSS feed for: "${source.name}" (ID: ${channelId})`);
       const url = `https://www.youtube.com/feeds/videos.xml?channel_id=${channelId}`;
-      const res = await axios.get(url, {
-        headers: { 'User-Agent': this.userAgent },
-        timeout: 15000
-      });
+      let res;
+      try {
+        res = await axios.get(url, {
+          headers: { 'User-Agent': this.userAgent },
+          timeout: 15000
+        });
+      } catch (httpErr) {
+        if (httpErr.response?.status === 404) {
+          logger.warn(`⚠️ YouTube channel "${source.name}" (${channelId}) not found (404). Channel may have been deleted or ID is invalid. Consider removing from dashboard.`);
+          this.database.upsertScraperHealth(source.source_id, source.type, false, 'Channel not found (404)');
+        } else if (httpErr.response?.status === 403) {
+          logger.warn(`⚠️ YouTube channel "${source.name}" (${channelId}) access forbidden (403). May be private or restricted.`);
+          this.database.upsertScraperHealth(source.source_id, source.type, false, 'Access forbidden (403)');
+        } else {
+          logger.error(`❌ HTTP error scraping YouTube RSS for "${source.name}": ${httpErr.message}`);
+          this.database.upsertScraperHealth(source.source_id, source.type, false, httpErr.message);
+        }
+        return;
+      }
+
+      if (!res.data) {
+        logger.warn(`⚠️ Empty response from YouTube RSS for ${source.name}`);
+        return;
+      }
 
       const videos = this.parseFeedXml(res.data);
       if (videos.length === 0) {
