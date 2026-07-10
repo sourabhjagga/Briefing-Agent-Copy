@@ -74,14 +74,14 @@ class Scheduler {
     logger.info(`📅 Scheduler reloaded: ${active.length} active rule(s).`);
   }
 
-  async _runSingleCategoryBrief(slug) {
+  async _runSingleCategoryBrief(slug, isManualTrigger = false) {
     const botInstance = this.botInstances.get(slug);
     if (!botInstance) {
       logger.warn(`⚠️ No bot instance for category "${slug}". Skipping.`);
       return;
     }
     const cat = this.database.getCategoryBySlug(slug);
-    await this._runSummaryJob(slug, botInstance, cat ? cat.ai_prompt : undefined);
+    await this._runSummaryJob(slug, botInstance, cat ? cat.ai_prompt : undefined, isManualTrigger);
   }
 
   /**
@@ -102,33 +102,55 @@ class Scheduler {
         logger.info(`⏳ Staggering "${cat.display_name}" briefing by 30 seconds...`);
         await new Promise(r => setTimeout(r, 30000));
       }
-      await this._runSummaryJob(cat.slug, botInstance, cat.ai_prompt);
+      await this._runSummaryJob(cat.slug, botInstance, cat.ai_prompt, true);
     }
   }
 
-  async _runSummaryJob(sourcePrefix, telegramInstance, customPrompt = undefined) {
+  async _runSummaryJob(sourcePrefix, telegramInstance, customPrompt = undefined, isManualTrigger = false) {
     logger.info(`=== STARTING ${sourcePrefix.toUpperCase()} BRIEFING GENERATION ===`);
     const today = new Date().toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata' });
+    const nowTimestamp = Math.floor(Date.now() / 1000);
     try {
-      const messages = this.database.getTodayMessages(sourcePrefix);
-      logger.info(`[${sourcePrefix}] Found ${messages.length} messages for today's brief.`);
+      // Get messages since last brief (or all today's messages if manual trigger or first run)
+      let messages;
+      if (isManualTrigger) {
+        // Manual trigger: process all messages from today
+        messages = this.database.getTodayMessages(sourcePrefix);
+        logger.info(`[${sourcePrefix}] Manual trigger: processing all ${messages.length} messages from today.`);
+      } else {
+        // Scheduled run: get messages since last brief
+        const lastBriefTs = this.database.getLastBriefTimestamp(sourcePrefix);
+        if (lastBriefTs > 0) {
+          messages = this.database.getMessagesSinceLastBrief(sourcePrefix, lastBriefTs);
+          logger.info(`[${sourcePrefix}] Incremental: found ${messages.length} new messages since last brief (ts: ${lastBriefTs}).`);
+        } else {
+          // First run ever: process all today's messages
+          messages = this.database.getTodayMessages(sourcePrefix);
+          logger.info(`[${sourcePrefix}] First run: processing all ${messages.length} messages from today.`);
+        }
+      }
       
       const category = this.database.getCategoryBySlug(sourcePrefix);
       const deliveryChannel = category?.delivery_channel || 'telegram';
       const adminJid = process.env.WHATSAPP_ADMIN_JID;
 
       if (messages.length === 0) {
-        logger.info(`[${sourcePrefix}] Skipping brief — 0 messages captured today.`);
+        logger.info(`[${sourcePrefix}] Skipping brief — 0 new messages since last brief.`);
         const shouldSendWhatsApp = deliveryChannel === 'whatsapp' || deliveryChannel === 'both';
         const shouldSendTelegram = deliveryChannel === 'telegram' || deliveryChannel === 'both';
         const deliveryJid = category?.whatsapp_delivery_jid || adminJid;
         
+        // Still update the timestamp so we don't re-check these messages
+        if (!isManualTrigger) {
+          this.database.updateLastBriefTimestamp(sourcePrefix, nowTimestamp);
+        }
+        
         if (shouldSendWhatsApp && deliveryJid) {
-          await this.whatsapp.sendMessage(deliveryJid, `🤷‍♂️ *No updates today!*\n\nThere were no messages captured from your monitored ${sourcePrefix.toUpperCase()} sources today.`);
+          await this.whatsapp.sendMessage(deliveryJid, `🤷‍♂️ *No new updates!*\n\nNo new messages captured from your monitored ${sourcePrefix.toUpperCase()} sources since the last brief.`);
         }
         if (shouldSendTelegram && telegramInstance) {
           try {
-            await telegramInstance.sendMessage(`🤷‍♂️ <b>No updates today!</b>\n\nThere were no messages captured from your monitored ${sourcePrefix.toUpperCase()} sources today.`);
+            await telegramInstance.sendMessage(`🤷‍♂️ <b>No new updates!</b>\n\nNo new messages captured from your monitored ${sourcePrefix.toUpperCase()} sources since the last brief.`);
           } catch (e) {
             logger.error(`Failed to send Telegram 'No updates' for ${sourcePrefix}: ${e.message}`);
           }
@@ -170,8 +192,12 @@ class Scheduler {
         }
       }
 
-      // FIX: Persist briefs and summaries for ALL categories, not just 'cc'.
-      // Use category slug as a scope key so each category maintains its own history.
+      // Update last brief timestamp AFTER successful delivery
+      if (!isManualTrigger) {
+        this.database.updateLastBriefTimestamp(sourcePrefix, nowTimestamp);
+      }
+      
+      // Persist briefs and summaries
       try {
         if (typeof this.database.saveSummary === 'function') {
           this.database.saveSummary(today, messages.length, summary, true, sourcePrefix);
@@ -213,7 +239,7 @@ class Scheduler {
   async triggerNow(slug) {
     if (slug) {
       logger.info(`⚡ Manual trigger for category: ${slug}`);
-      await this._runSingleCategoryBrief(slug);
+      await this._runSingleCategoryBrief(slug, true);
     } else {
       logger.info('⚡ Manual summary trigger requested across all profiles.');
       await this._runAllCategoryBriefs();

@@ -172,6 +172,12 @@ class DatabaseManager {
       this.db.exec(`ALTER TABLE sources ADD COLUMN is_private INTEGER DEFAULT 0`);
       logger.info('📊 Migrated: added is_private column to sources');
     } catch (e) { /* already exists */ }
+
+    // Migrate: add last_brief_timestamp column to categories for incremental processing
+    try {
+      this.db.exec(`ALTER TABLE categories ADD COLUMN last_brief_timestamp INTEGER DEFAULT 0`);
+      logger.info('📊 Migrated: added last_brief_timestamp column to categories');
+    } catch (e) { /* already exists */ }
   }
 
   /**
@@ -250,6 +256,17 @@ class DatabaseManager {
         WHERE source_type LIKE ? AND timestamp >= ?
         GROUP BY group_id
         ORDER BY count DESC
+      `),
+      getMessagesSinceLastBrief: this.db.prepare(`
+        SELECT * FROM messages
+        WHERE source_type LIKE ? AND timestamp > ?
+        ORDER BY timestamp ASC
+      `),
+      getLastBriefTimestamp: this.db.prepare(`
+        SELECT last_brief_timestamp FROM categories WHERE slug = ?
+      `),
+      updateLastBriefTimestamp: this.db.prepare(`
+        UPDATE categories SET last_brief_timestamp = ? WHERE slug = ?
       `),
       searchMessages: this.db.prepare(`
         SELECT * FROM messages
@@ -477,6 +494,18 @@ class DatabaseManager {
 
   getTodayActiveGroups(sourcePrefix) {
     return this.statements.getTodayActiveGroups.all(`${sourcePrefix}%`, this._istDayStart());
+  }
+
+  getMessagesSinceLastBrief(sourcePrefix, sinceTimestamp) {
+    return this.statements.getMessagesSinceLastBrief.all(`${sourcePrefix}%`, sinceTimestamp);
+  }
+
+  getLastBriefTimestamp(categorySlug) {
+    return this.statements.getLastBriefTimestamp.get(categorySlug)?.last_brief_timestamp || 0;
+  }
+
+  updateLastBriefTimestamp(categorySlug, timestamp) {
+    this.statements.updateLastBriefTimestamp.run(timestamp, categorySlug);
   }
 
   searchMessages(keyword, limit = 20, sourcePrefix = '') {
