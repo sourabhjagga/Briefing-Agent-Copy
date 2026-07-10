@@ -224,19 +224,42 @@ class WebScraper {
           logger.info(`✅ Found ${items.length} threads in "${target.name}"`);
         }
       } else {
-        const PRIMARY_SELECTOR = 'li.post-unit, article.deal-card, .deal-item, .post-card, .thread-item, .topic-item, .discussion-item, div[class*="deal"], div[class*="post"], div[class*="topic"], li[class*="post"], li[class*="topic"]';
+        // Enhanced DesiDime selectors - updated for current DOM structure
+        const PRIMARY_SELECTORS = [
+          'article.deal-card',
+          'div.deal-card',
+          'div[class*="deal-card"]',
+          'li.post-unit',
+          'div.post-unit',
+          'article[class*="deal"]',
+          'div[class*="deal-item"]',
+          'li[class*="deal"]',
+          '.deal-item',
+          '.post-item',
+          '.deal-container',
+          '.thread-item',
+          '.topic-item',
+          '.discussion-item',
+          'div[class*="thread"]',
+          'div[class*="topic"]',
+          'li[class*="post"]',
+          'li[class*="topic"]'
+        ].join(', ');
 
-        $(PRIMARY_SELECTOR).each((i, el) => {
+        $(PRIMARY_SELECTORS).each((i, el) => {
           if (i >= 25) return;
           const row = $(el);
+          // Try multiple title selectors in order of specificity
           const titleEl = row.find(
-            '.post-unit__title a, a.post-link, .deal-card__title a, .deal-item__title a, .topic-title a, .discussion-title a, h2 a, h3 a, .title a'
+            'h2 a, h3 a, h4 a, .deal-title a, .post-title a, .thread-title a, .topic-title a, .title a, a.deal-link, a[href*="/deal/"], a[href*="/coupon/"], a[href*="/offer/"]'
           ).first();
+          // Description/merchant
           const descEl = row.find(
-            '.post-unit__merchant-link, .post-unit__description, .deal-card__merchant, .deal-description, .topic-merchant, .discussion-merchant'
+            '.deal-desc, .deal-description, .post-desc, .post-description, .merchant, .store-name, .deal-store, .post-merchant, .thread-merchant, p.description, p.desc, .content, .excerpt'
           ).first();
+          // Price/discount
           const priceEl = row.find(
-            '.post-unit__price, .deal-price, .discount, .deal-card__price, .topic-price, .discussion-price, [class*="price"], [class*="discount"]'
+            '.deal-price, .price, .discount, .deal-discount, .offer-price, .sale-price, .current-price, [class*="price"], [class*="discount"], [class*="offer"]'
           ).first();
 
           let link = titleEl.attr('href') || '';
@@ -244,9 +267,10 @@ class WebScraper {
             link = 'https://www.desidime.com' + link;
           }
 
-          if (titleEl.length > 0 && titleEl.text().trim().length > 5) {
+          const titleText = titleEl.text().trim();
+          if (titleText.length > 5) {
             items.push({
-              title: titleEl.text().trim(),
+              title: titleText,
               link: link,
               description: descEl.length > 0 ? descEl.text().trim() : '',
               price: priceEl.length > 0 ? priceEl.text().trim() : ''
@@ -256,8 +280,12 @@ class WebScraper {
 
         if (items.length === 0) {
           logger.warn(`⚠️ Primary DOM selectors did not match any deals. Using fallback link matcher...`);
+          // Debug: log first 500 chars of body for debugging
+          const bodySample = $('body').text().trim().substring(0, 500);
+          logger.debug(`DesiDime body sample: ${bodySample}`);
+          
           const seen = new Set();
-          $('a[href*="/deals/"], a[href*="/forums/"]').each((i, el) => {
+          $('a[href*="/deal/"], a[href*="/coupon/"], a[href*="/offer/"], a[href*="/deals/"], a[href*="/forums/"]').each((i, el) => {
             const l = $(el);
             let href = l.attr('href') || '';
             if (href && !href.startsWith('http')) {
@@ -357,14 +385,12 @@ class WebScraper {
       target.id, target.type, `reddit_${sub}`, target.name, 'forum'
     );
 
-    let success = await this._scrapeViaJSON(sub, target.type, target.name, instanceId);
+    // Layer 1: Direct Reddit RSS feed (no auth, reliable)
+    let success = await this._scrapeViaRSS(sub, target.type, target.name, instanceId);
 
+    // Layer 2: Authenticated Puppeteer scraper (if cookies available)
     if (!success) {
       success = await this._scrapeViaCookies(sub, target.type, target.name, page, instanceId);
-    }
-
-    if (!success) {
-      success = await this._scrapeViaRSS(sub, target.type, target.name, instanceId);
     }
 
     this.database.upsertScraperHealth(
@@ -378,26 +404,53 @@ class WebScraper {
     }
   }
 
-  async _scrapeViaJSON(sub, sourceType, sourceName, instanceId) {
-    logger.debug(`Reddit Layer 1: Attempting public JSON API for r/${sub}`);
+  async _scrapeViaRSS(sub, sourceType, sourceName, instanceId) {
+    logger.info(`Reddit Layer 1: Attempting native RSS feed for r/${sub}`);
     try {
-      const res = await axios.get(`https://www.reddit.com/r/${sub}/new.json?limit=15`, {
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1 cc-brief-agent-v1',
-          'Accept': 'application/json'
+      const rssUrl = `https://www.reddit.com/r/${sub}/new/.rss`;
+      const res = await axios.get(rssUrl, {
+        headers: { 
+          'User-Agent': 'Mozilla/5.0 (compatible; cc-brief-agent/1.0; +https://github.com/sourabhjagga/Briefing-Agent-Copy)'
         },
         timeout: 15000
       });
 
-      if (res.data && res.data.data && res.data.data.children) {
-        const posts = res.data.data.children.map(child => child.data);
+      const xml = res.data;
+      const $ = cheerio.load(xml, { xmlMode: true });
+      const posts = [];
+
+      $('item').each((i, el) => {
+        if (i >= 15) return;
+        const item = $(el);
+        const title = item.find('title').text().trim();
+        const link = item.find('link').text().trim();
+        const author = item.find('author').text().trim() || 'Reddit User';
+        const pubDate = item.find('pubDate').text().trim();
+        const content = item.find('content\\:encoded, encoded, description').first().text().trim();
+        
+        const idMatch = link.match(/\/comments\/([a-z0-9]+)\//i);
+        const id = idMatch ? idMatch[1] : Math.random().toString(36).slice(2);
+
+        if (title) {
+          posts.push({
+            id,
+            title,
+            selftext: content.replace(/<[^>]*>/g, '').trim(),
+            permalink: link.replace('https://www.reddit.com', ''),
+            author
+          });
+        }
+      });
+
+      if (posts.length > 0) {
         await this._saveRedditPosts(posts, sub, sourceType, sourceName, instanceId);
-        logger.info(`✅ Reddit Layer 1: Ingested ${posts.length} posts from r/${sub}`);
+        logger.info(`✅ Reddit Layer 1 (RSS): Ingested ${posts.length} posts from r/${sub}`);
         return true;
       }
+      logger.warn(`Reddit Layer 1 (RSS): No posts found for r/${sub}`);
       return false;
     } catch (err) {
-      logger.debug(`Reddit Layer 1 failed for r/${sub}: ${err.message}`);
+      logger.warn(`Reddit Layer 1 (RSS) failed for r/${sub}: ${err.message}`);
       return false;
     }
   }
@@ -405,11 +458,11 @@ class WebScraper {
   async _scrapeViaCookies(sub, sourceType, sourceName, page, instanceId) {
     const cookiesArray = this.database.getCookies('reddit');
     if (!cookiesArray || cookiesArray.length === 0) {
-      logger.debug('Reddit Layer 2: Skipping, no session cookies active.');
+      logger.info('Reddit Layer 2: Skipping - no session cookies configured in dashboard.');
       return false;
     }
 
-    logger.debug(`Reddit Layer 2: Attempting authenticated Puppeteer scraper for r/${sub}`);
+    logger.info(`Reddit Layer 2: Attempting authenticated Puppeteer scraper for r/${sub}`);
     try {
       const sanitized = cookiesArray.map(c => ({
         name: c.name,
@@ -420,12 +473,13 @@ class WebScraper {
       await page.setCookie(...sanitized);
 
       const targetUrl = `https://www.reddit.com/r/${sub}/new/`;
-      await page.goto(targetUrl, { waitUntil: 'domcontentloaded', timeout: 45000 });
+      await page.goto(targetUrl, { waitUntil: 'networkidle2', timeout: 45000 });
 
       try {
-        await page.waitForSelector('shreddit-post, article, [data-testid="post-container"]', { timeout: 15000 });
+        // New Reddit UI selectors
+        await page.waitForSelector('shreddit-post, faceplate-tracker, [data-testid="post-container"]', { timeout: 15000 });
       } catch (e) {
-        logger.debug(`Timeout waiting for Reddit selectors on r/${sub}.`);
+        logger.warn(`Timeout waiting for Reddit selectors on r/${sub}, trying fallback...`);
       }
 
       const currentCookies = await page.cookies();
@@ -435,7 +489,8 @@ class WebScraper {
       const $ = cheerio.load(html);
       const posts = [];
 
-      $('shreddit-post, article, [data-testid="post-container"]').each((i, el) => {
+      // New Reddit UI: shreddit-post, faceplate-tracker
+      $('shreddit-post, faceplate-tracker, [data-testid="post-container"]').each((i, el) => {
         if (i >= 15) return;
         const art = $(el);
         const title = art.attr('post-title') || art.find('h1, h2, h3, a[href*="/comments/"]').first().text().trim();
@@ -455,55 +510,38 @@ class WebScraper {
         }
       });
 
+      // Fallback for old Reddit or if new selectors fail
+      if (posts.length === 0) {
+        $('article, .Post, [data-testid="post-container"]').each((i, el) => {
+          if (i >= 15) return;
+          const art = $(el);
+          const title = art.find('h3 a, h2 a, .title a').first().text().trim();
+          const link = art.find('a[href*="/comments/"]').first().attr('href') || '';
+          const author = art.find('[data-click-id="user"], .author').first().text().trim() || 'Reddit User';
+          const id = art.attr('id') ? art.attr('id').replace('t3_', '') : Math.random().toString(36).slice(2);
+          const text = art.find('[data-click-id="text_body"], .md, .usertext-body').first().text().trim();
+
+          if (title) {
+            posts.push({
+              id,
+              title,
+              selftext: text,
+              permalink: link,
+              author
+            });
+          }
+        });
+      }
+
       if (posts.length > 0) {
         await this._saveRedditPosts(posts, sub, sourceType, sourceName, instanceId);
-        logger.info(`✅ Reddit Layer 2: Ingested ${posts.length} posts from r/${sub} via Puppeteer`);
+        logger.info(`✅ Reddit Layer 2 (Puppeteer): Ingested ${posts.length} posts from r/${sub}`);
         return true;
       }
+      logger.warn(`Reddit Layer 2 (Puppeteer): No posts extracted from r/${sub}`);
       return false;
     } catch (err) {
-      logger.debug(`Reddit Layer 2 failed for r/${sub}: ${err.message}`);
-      return false;
-    }
-  }
-
-  async _scrapeViaRSS(sub, sourceType, sourceName, instanceId) {
-    logger.debug(`Reddit Layer 3: Attempting RSS-to-JSON fallback for r/${sub}`);
-    try {
-      const res = await axios.get(
-        `https://api.rss2json.com/v1/api.json?rss_url=https://www.reddit.com/r/${sub}/new/.rss`,
-        {
-          headers: { 'User-Agent': 'Mozilla/5.0' },
-          timeout: 15000
-        }
-      );
-
-      if (res.data && res.data.status === 'ok') {
-        const items = res.data.items || [];
-        const posts = items.map(item => {
-          const guid = item.guid || item.link || '';
-          const idMatch = guid.match(/\/comments\/([a-z0-9]+)\//i);
-          const id = idMatch ? idMatch[1] : Math.random().toString(36).slice(2);
-
-          let content = item.content || '';
-          content = content.replace(/<[^>]*>/g, '').trim();
-
-          return {
-            id,
-            title: item.title,
-            selftext: content,
-            permalink: item.link.replace('https://www.reddit.com', ''),
-            author: item.author || 'Reddit User'
-          };
-        });
-
-        await this._saveRedditPosts(posts, sub, sourceType, sourceName, instanceId);
-        logger.info(`✅ Reddit Layer 3: Ingested ${posts.length} posts from r/${sub} via RSS`);
-        return true;
-      }
-      return false;
-    } catch (err) {
-      logger.debug(`Reddit Layer 3 failed for r/${sub}: ${err.message}`);
+      logger.warn(`Reddit Layer 2 (Puppeteer) failed for r/${sub}: ${err.message}`);
       return false;
     }
   }
