@@ -11,6 +11,19 @@ const path = require('path');
 const fs = require('fs');
 const logger = require('./logger');
 
+/**
+ * Determines whether a session error is unrecoverable and requires
+ * the auth store to be wiped before reconnecting.
+ */
+function isSessionCorruptionError(err) {
+  if (!err || !err.message) return false;
+  return (
+    err.message.includes('Bad MAC') ||
+    err.message.includes('Over 2000 messages into the future') ||
+    err.message.includes('SessionError')
+  );
+}
+
 class WhatsAppListener {
   constructor(database, onAlert) {
     this.database = database;
@@ -24,6 +37,8 @@ class WhatsAppListener {
     this.authPath = path.resolve(__dirname, '../data/baileys_auth');
     this.chatNameMapFile = path.resolve(__dirname, '../data/chat-name-map.json');
     this.chatNameMap = {};
+    // Guard flag to prevent concurrent session-wipe+restart cycles
+    this._sessionWipeInProgress = false;
     
     // Load cached chat names
     if (fs.existsSync(this.chatNameMapFile)) {
@@ -37,15 +52,46 @@ class WhatsAppListener {
     this._refreshTargets();
   }
 
+  /**
+   * Wipes the Baileys auth folder and schedules a fresh start().
+   * Safe to call multiple times - only runs once per corruption event.
+   */
+  _handleSessionCorruption(reason) {
+    if (this._sessionWipeInProgress) {
+      logger.warn(`Session wipe already in progress, skipping duplicate trigger (reason: ${reason})`);
+      return;
+    }
+    this._sessionWipeInProgress = true;
+    logger.error(`WhatsApp session corruption detected (${reason}). Wiping auth and restarting...`);
+    try {
+      if (this.sock) {
+        this.sock.end(new Error('session-corruption-wipe')).catch(() => {});
+        this.sock = null;
+      }
+    } catch (_) { /* ignore */ }
+    try {
+      if (fs.existsSync(this.authPath)) {
+        fs.rmSync(this.authPath, { recursive: true, force: true });
+        logger.info('Cleared baileys_auth credentials folder due to session corruption.');
+      }
+    } catch (err) {
+      logger.error(`Failed to clear auth path during session corruption recovery: ${err.message}`);
+    }
+    this.isReady = false;
+    setTimeout(() => {
+      this._sessionWipeInProgress = false;
+      logger.info('Restarting WhatsApp socket in clean state after session corruption...');
+      this.start();
+    }, 5000);
+  }
+
   _refreshTargets() {
     try {
-      // Load targets for ALL category types ending in -whatsapp
       const allSources = this.database.getAllSources();
       const whatsappSources = allSources.filter(s => s.is_active === 1 && s.type.endsWith('-whatsapp'));
       
       this.targetIds = new Set(whatsappSources.map(s => s.source_id.trim().toLowerCase()));
 
-      // Seed only WhatsApp sources' names into chatNameMap dynamically
       let updated = false;
       whatsappSources.forEach(s => {
         if (s.source_id && s.name) {
@@ -57,7 +103,6 @@ class WhatsAppListener {
         }
       });
 
-      // Remove stale entries (e.g., from old chat-name-map.json before the fix)
       for (const id of Object.keys(this.chatNameMap)) {
         if (!this.targetIds.has(id) && !id.includes('@g.us') && !id.includes('@newsletter')) {
           delete this.chatNameMap[id];
@@ -69,14 +114,14 @@ class WhatsAppListener {
         this._saveChatNameMap();
       }
 
-      logger.info(`🎯 Mapped ${this.targetIds.size} active WhatsApp targets for strict ID filtering.`);
+      logger.info(`Mapped ${this.targetIds.size} active WhatsApp targets for strict ID filtering.`);
     } catch (err) {
       logger.error(`Failed to refresh WhatsApp targets: ${err.message}`);
     }
   }
 
   async start() {
-    logger.info('📱 Initializing WhatsApp Baileys socket client...');
+    logger.info('Initializing WhatsApp Baileys socket client...');
     try {
       const { state, saveCreds } = await useMultiFileAuthState(this.authPath);
       
@@ -84,7 +129,7 @@ class WhatsAppListener {
         logger.warn(`Could not dynamically fetch WA Web version: ${err.message}. Using stable fallback.`);
         return { version: [2, 3000, 1015024227], isLatest: false };
       });
-      logger.info(`📡 WhatsApp client running with version [${version.join('.')}] (Latest: ${isLatest})`);
+      logger.info(`WhatsApp client running with version [${version.join('.')}] (Latest: ${isLatest})`);
 
       this.sock = makeWASocket({
         version,
@@ -113,7 +158,7 @@ class WhatsAppListener {
           });
           if (count > 0) {
             this._saveChatNameMap();
-            logger.info(`📡 Synced ${count} active groups/newsletters from history sync (chats.set).`);
+            logger.info(`Synced ${count} active groups/newsletters from history sync (chats.set).`);
           }
         }
       });
@@ -133,7 +178,7 @@ class WhatsAppListener {
           });
           if (count > 0) {
             this._saveChatNameMap();
-            logger.info(`📡 Synced ${count} new/updated groups/newsletters (chats.upsert).`);
+            logger.info(`Synced ${count} new/updated groups/newsletters (chats.upsert).`);
           }
         }
       });
@@ -166,21 +211,15 @@ class WhatsAppListener {
         }
         if (count > 0) {
           this._saveChatNameMap();
-          logger.info(`📡 Synced ${count} active groups/newsletters from history sync (messaging-history.set).`);
+          logger.info(`Synced ${count} active groups/newsletters from history sync (messaging-history.set).`);
         }
         
-        // Process messages from history sync
         if (messages && Array.isArray(messages)) {
             for (const msg of messages) {
                 if (!msg.message || msg.key.fromMe) continue;
                 this._processIncomingMessage(msg).catch(err => {
-                    if (err.message.includes('Bad MAC')) {
-                        logger.error('📱 Critical WhatsApp session error (Bad MAC). Wiping session and restarting...');
-                        if (fs.existsSync(this.authPath)) {
-                            fs.rmSync(this.authPath, { recursive: true, force: true });
-                        }
-                        // This will trigger a full restart via the connection.update handler
-                        this.sock.logout();
+                    if (isSessionCorruptionError(err)) {
+                        this._handleSessionCorruption(err.message);
                     } else {
                         logger.error(`Error processing history message: ${err.message}`);
                     }
@@ -202,7 +241,7 @@ class WhatsAppListener {
 
           const adminJid = process.env.WHATSAPP_ADMIN_JID;
           if (adminJid) {
-            this.sendMessage(adminJid, `📱 New WhatsApp QR code generated. Please scan to continue.`);
+            this.sendMessage(adminJid, `New WhatsApp QR code generated. Please scan to continue.`);
           }
         }
 
@@ -214,25 +253,31 @@ class WhatsAppListener {
           const errorDetail = lastDisconnect?.error?.output?.payload?.error || lastDisconnect?.error?.output?.payload?.message || '';
           
           const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
+
+          // Detect session corruption on connection close
+          if (lastDisconnect?.error && isSessionCorruptionError(lastDisconnect.error)) {
+            this._handleSessionCorruption(errorMessage || 'connection.update close');
+            return;
+          }
           
-          logger.warn(`❌ WhatsApp connection closed. Reason: ${errorMessage || 'unknown'} (${errorDetail}). Code: ${statusCode}. Reconnecting: ${shouldReconnect}`);
+          logger.warn(`WhatsApp connection closed. Reason: ${errorMessage || 'unknown'} (${errorDetail}). Code: ${statusCode}. Reconnecting: ${shouldReconnect}`);
           
           if (!this.isSessionAlerted && this.onAlert && !shouldReconnect) {
-            this.onAlert('📱 <b>WhatsApp Session Expired / Logged Out</b>\n\nYour WhatsApp session has been logged out. Please open the Web Dashboard and re-scan the QR code.');
+            this.onAlert('WhatsApp Session Expired / Logged Out. Your WhatsApp session has been logged out. Please open the Web Dashboard and re-scan the QR code.');
             this.isSessionAlerted = true;
           }
 
           if (shouldReconnect) {
             setTimeout(() => this.start(), 10000);
           } else {
-            logger.error('‼️ WhatsApp session logged out. Automatically clearing session and generating fresh QR code...');
+            logger.error('WhatsApp session logged out. Automatically clearing session and generating fresh QR code...');
             try {
               if (fs.existsSync(this.authPath)) {
                 fs.rmSync(this.authPath, { recursive: true, force: true });
-                logger.info('🧹 Successfully cleared baileys_auth credentials folder.');
+                logger.info('Successfully cleared baileys_auth credentials folder.');
               }
               setTimeout(() => {
-                logger.info('🔄 Restarting WhatsApp socket in clean state to generate fresh QR...');
+                logger.info('Restarting WhatsApp socket in clean state to generate fresh QR...');
                 this.start();
               }, 5000);
             } catch (err) {
@@ -243,7 +288,7 @@ class WhatsAppListener {
           this.isReady = true;
           this.isSessionAlerted = false;
           this.latestQr = null;
-          logger.info('✅ WhatsApp socket client successfully connected!');
+          logger.info('WhatsApp socket client successfully connected!');
           await this._discoverChats();
         }
       });
@@ -258,24 +303,30 @@ class WhatsAppListener {
           try {
             await this._processIncomingMessage(msg);
           } catch (err) {
+            if (isSessionCorruptionError(err)) {
+              this._handleSessionCorruption(err.message);
+              break; // Stop processing further messages; session is being reset
+            }
             logger.error(`Error processing incoming WhatsApp message: ${err.message}`);
           }
         }
       });
 
     } catch (err) {
-      logger.error(`Failed to start WhatsApp socket client: ${err.message}`);
-      setTimeout(() => this.start(), 30000);
+      if (isSessionCorruptionError(err)) {
+        this._handleSessionCorruption(err.message);
+      } else {
+        logger.error(`Failed to start WhatsApp socket client: ${err.message}`);
+        setTimeout(() => this.start(), 30000);
+      }
     }
   }
 
   async _processIncomingMessage(msg) {
     const remoteJid = (msg.key.remoteJid || '').toLowerCase();
     
-    // Refresh target set first to catch newly added sources
     this._refreshTargets();
 
-    // Strict target filter checking JID in cached set
     if (!this.targetIds.has(remoteJid)) return;
 
     const chatName = this.chatNameMap[remoteJid] || msg.pushName || remoteJid.split('@')[0];
@@ -310,13 +361,11 @@ class WhatsAppListener {
       sourceType: 'cc-whatsapp'
     };
 
-    // Determine category type dynamically based on DB source configuration
     const matchingSource = this.database.getAllSources().find(
       s => s.source_id.trim().toLowerCase() === remoteJid && s.is_active === 1
     );
     messageData.sourceType = matchingSource ? matchingSource.type : 'cc-whatsapp';
 
-    // get or create source_instance and add FK
     if (matchingSource) {
       const instanceId = this.database.ensureSourceInstance(
         matchingSource.id,
@@ -331,18 +380,18 @@ class WhatsAppListener {
     this.database.saveMessage(messageData);
     this.messageCount++;
 
-    logger.debug(`✉️  [WhatsApp: ${chatName}] ${senderName}: ${body.substring(0, 60)}`);
+    logger.debug(`[WhatsApp: ${chatName}] ${senderName}: ${body.substring(0, 60)}`);
   }
 
   async _discoverChats() {
-    logger.info('🔍 Syncing WhatsApp participating chats...');
+    logger.info('Syncing WhatsApp participating chats...');
     try {
       const groups = await this.sock.groupFetchAllParticipating();
       Object.keys(groups).forEach(id => {
         this.chatNameMap[id.toLowerCase()] = groups[id].subject;
       });
       this._saveChatNameMap();
-      logger.info(`✅ Synced ${Object.keys(groups).length} participating groups from account.`);
+      logger.info(`Synced ${Object.keys(groups).length} participating groups from account.`);
     } catch (err) {
       logger.error(`WhatsApp group discovery failed: ${err.message}`);
     }
@@ -352,7 +401,7 @@ class WhatsAppListener {
 
   async _syncNewsletters() {
     try {
-      logger.info('🔍 Fetching subscribed WhatsApp newsletters/channels...');
+      logger.info('Fetching subscribed WhatsApp newsletters/channels...');
       let newsletters = null;
       if (typeof this.sock.newsletterGetSubscribed === 'function') {
         newsletters = await this.sock.newsletterGetSubscribed();
@@ -375,9 +424,9 @@ class WhatsAppListener {
           this.chatNameMap[id] = n.name || n.subject || 'WhatsApp Channel';
         });
         this._saveChatNameMap();
-        logger.info(`✅ Synced ${newsletters.length} newsletters/channels.`);
+        logger.info(`Synced ${newsletters.length} newsletters/channels.`);
       } else {
-        logger.info('ℹ️ No newsletters returned.');
+        logger.info('No newsletters returned.');
       }
     } catch (newsErr) {
       logger.warn(`Could not sync newsletters: ${newsErr.message}`);
@@ -398,7 +447,6 @@ class WhatsAppListener {
   }
 
   getAllChats() {
-    // Returns dynamic array of discovered group objects for dashboard
     return Object.keys(this.chatNameMap).map(id => ({
       id,
       name: this.chatNameMap[id]
@@ -412,7 +460,7 @@ class WhatsAppListener {
         return;
       }
       await this.sock.sendMessage(jid, { text });
-      logger.info(`✅ Sent WhatsApp message to ${jid}`);
+      logger.info(`Sent WhatsApp message to ${jid}`);
     } catch (err) {
       logger.error(`Failed to send WhatsApp message to ${jid}: ${err.message}`);
     }
