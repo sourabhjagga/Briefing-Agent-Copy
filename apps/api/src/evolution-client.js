@@ -24,6 +24,7 @@ class EvolutionApiClient {
     this.isReady = false;
     this.latestQr = null;
     this.instanceId = null;
+    this._monitorInterval = null;
     
     // HTTP client with auth
     this.http = axios.create({
@@ -81,19 +82,12 @@ class EvolutionApiClient {
       const finalState = await this.getConnectionState();
       logger.info(`Final WhatsApp connection state after wait: ${finalState}`);
       if (finalState === 'open' || finalState === 'connected') {
-        this.isReady = true;
-        logger.info(`WhatsApp connection confirmed: ${finalState}`);
-        
-        // Setup webhook and sync groups only after confirmed connection
-        if (this.webhookUrl) {
-          await this._setupWebhook();
-        }
-        
-        // Sync groups
-        await this._syncGroups();
+        await this._onConnected();
       } else {
         logger.warn(`WhatsApp not connected (state: ${finalState}). Webhook and group sync will be deferred until connection is established.`);
         this.isReady = false;
+        // Start background monitor to detect when QR is scanned and connection becomes open
+        this._startConnectionMonitor();
       }
       
       logger.info('Evolution API client initialized successfully');
@@ -101,6 +95,45 @@ class EvolutionApiClient {
     } catch (err) {
       logger.error(`Failed to initialize Evolution API client: ${err.message}`);
       throw err;
+    }
+  }
+
+  async _onConnected() {
+    this.isReady = true;
+    logger.info('WhatsApp connection confirmed: open');
+    this.latestQr = null;
+    
+    // Setup webhook and sync groups
+    if (this.webhookUrl) {
+      await this._setupWebhook();
+    }
+    await this._syncGroups();
+  }
+
+  _startConnectionMonitor() {
+    if (this._monitorInterval) return;
+    logger.info('Starting connection state monitor (polls every 15s)...');
+    this._monitorInterval = setInterval(async () => {
+      try {
+        const state = await this.getConnectionState();
+        if (state === 'open' || state === 'connected') {
+          logger.info('Connection detected as open by monitor. Setting up webhook and syncing groups...');
+          clearInterval(this._monitorInterval);
+          this._monitorInterval = null;
+          await this._onConnected();
+        }
+      } catch (err) {
+        logger.debug(`Connection monitor error: ${err.message}`);
+      }
+    }, 15000);
+  }
+
+  async stop() {
+    logger.info('Stopping Evolution API client...');
+    this.isReady = false;
+    if (this._monitorInterval) {
+      clearInterval(this._monitorInterval);
+      this._monitorInterval = null;
     }
   }
 
@@ -555,12 +588,6 @@ class EvolutionApiClient {
   async reconnect(force = false) {
     // Alias for restart, with optional force parameter
     return this.restart();
-  }
-
-  async stop() {
-    logger.info('Stopping Evolution API client...');
-    this.isReady = false;
-    // Evolution API manages connection, we just mark as not ready
   }
 }
 
