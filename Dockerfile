@@ -7,8 +7,10 @@ WORKDIR /app
 COPY package.json ./
 COPY apps/api/package.json ./apps/api/package.json
 COPY apps/dashboard/package.json ./apps/dashboard/package.json
+COPY .npmrc ./
 
-RUN npm install --foreground-scripts
+# Retry npm install up to 3 times with backoff for network issues
+RUN for i in 1 2 3; do npm install --foreground-scripts && break || sleep $((i * 10)); done
 
 COPY apps/dashboard ./apps/dashboard
 RUN npm run build --prefix apps/dashboard
