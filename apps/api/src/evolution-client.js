@@ -77,14 +77,22 @@ class EvolutionApiClient {
       // Wait for connection and get QR if needed
       await this._waitForConnection();
       
-      // Setup webhook and sync groups only after connection is open
-      if (this.isReady) {
+      // Verify connection is actually open before proceeding
+      const finalState = await this.getConnectionState();
+      if (finalState === 'open' || finalState === 'connected') {
+        this.isReady = true;
+        logger.info(`WhatsApp connection confirmed: ${finalState}`);
+        
+        // Setup webhook and sync groups only after confirmed connection
         if (this.webhookUrl) {
           await this._setupWebhook();
         }
         
         // Sync groups
         await this._syncGroups();
+      } else {
+        logger.warn(`WhatsApp not connected (state: ${finalState}). Webhook and group sync will be deferred until connection is established.`);
+        this.isReady = false;
       }
       
       logger.info('Evolution API client initialized successfully');
