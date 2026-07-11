@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/api-client";
 import { Card } from "@/components/ui/card";
@@ -12,7 +12,7 @@ import { Dialog } from "@/components/ui/dialog";
 import { DataTable, type Column } from "@/components/data-table";
 import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/components/toast-provider";
-import { Plus, Trash2, Search } from "lucide-react";
+import { Plus, Trash2, Search, RefreshCw, Wifi, WifiOff, Loader2 } from "lucide-react";
 
 interface WhatsAppSource extends Record<string, unknown> {
   id: number;
@@ -34,6 +34,15 @@ interface Category {
   display_name: string;
 }
 
+interface HealthStatus {
+  healthy: boolean;
+  whatsapp: string;
+  whatsappQr: string | null;
+  messagesToday: number;
+  targetGroups: number;
+  uptime: number;
+}
+
 function extractCategory(type: string): string {
   const idx = type.indexOf("-whatsapp");
   return idx > 0 ? type.slice(0, idx) : type;
@@ -44,8 +53,28 @@ export default function WhatsAppPage() {
   const [deleteId, setDeleteId] = useState<number | null>(null);
   const [discoverEnabled, setDiscoverEnabled] = useState(false);
   const [form, setForm] = useState({ name: "", source_id: "", category_slug: "" });
+  const [whatsappQr, setWhatsAppQr] = useState<string | null>(null);
+  const [whatsappStatus, setWhatsAppStatus] = useState<string>("unknown");
   const { toast } = useToast();
   const queryClient = useQueryClient();
+
+  // Fetch WhatsApp connection status from health endpoint
+  const { data: health, refetch: refetchHealth } = useQuery<HealthStatus>({
+    queryKey: ["health"],
+    queryFn: () => apiRequest<HealthStatus>("/health"),
+    refetchInterval: 10000, // Refetch every 10 seconds
+    staleTime: 5000,
+  });
+
+  // Update local state when health data changes
+  useEffect(() => {
+    if (health) {
+      setWhatsAppStatus(health.whatsapp);
+      if (health.whatsappQr) {
+        setWhatsAppQr(health.whatsappQr);
+      }
+    }
+  }, [health]);
 
   const { data: sources = [], isLoading: sourcesLoading } = useQuery<WhatsAppSource[]>({
     queryKey: ["whatsapp-sources"],
@@ -58,7 +87,7 @@ export default function WhatsAppPage() {
     queryFn: () => apiRequest<Category[]>("/api/categories"),
   });
 
-  const { data: discovered = [], isLoading: discoverLoading, refetch } = useQuery<DiscoveredGroup[]>({
+  const { data: discovered = [], isLoading: discoverLoading, refetch: refetchDiscover } = useQuery<DiscoveredGroup[]>({
     queryKey: ["whatsapp-discover"],
     queryFn: () => apiRequest<DiscoveredGroup[]>("/api/whatsapp/discover"),
     enabled: discoverEnabled,
@@ -111,7 +140,7 @@ export default function WhatsAppPage() {
     if (!discoverEnabled) {
       setDiscoverEnabled(true);
     } else {
-      refetch();
+      refetchDiscover();
     }
   };
 
@@ -217,11 +246,80 @@ export default function WhatsAppPage() {
     },
   ];
 
+  // Fetch QR code when disconnected
+  const fetchQrCode = async () => {
+    try {
+      const response = await fetch("/api/whatsapp/qr");
+      if (response.ok) {
+        const blob = await response.blob();
+        const url = URL.createObjectURL(blob);
+        setWhatsAppQr(url);
+        toast("QR code refreshed", "success");
+      } else {
+        const error = await response.json();
+        toast(error.error || "Failed to fetch QR code", "error");
+      }
+    } catch (err) {
+      toast("Failed to fetch QR code", "error");
+    }
+  };
+
+  // Trigger QR fetch when status changes to connecting/close
+  useEffect(() => {
+    if (whatsappStatus === "connecting" || whatsappStatus === "close") {
+      fetchQrCode();
+    }
+  }, [whatsappStatus]);
+
+  const isConnected = whatsappStatus === "connected";
+
   return (
     <div className="flex-1 space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold">WhatsApp</h1>
+        <div className="flex items-center gap-2">
+          <span className={`flex items-center gap-1.5 text-sm font-medium ${
+            isConnected ? "text-success" : "text-warning"
+          }`}>
+            {isConnected ? (
+              <Wifi className="h-4 w-4" />
+            ) : (
+              <WifiOff className="h-4 w-4" />
+            )}
+            <span className="capitalize">{whatsappStatus}</span>
+          </span>
+          {!isConnected && (
+            <Button variant="outline" size="sm" onClick={fetchQrCode} disabled={whatsappStatus !== "connecting" && whatsappStatus !== "close"}>
+              <RefreshCw className="h-4 w-4 mr-1" />
+              Refresh QR
+            </Button>
+          )}
+        </div>
       </div>
+
+      {/* QR Code Display when disconnected */}
+      {!isConnected && whatsappQr && (
+        <Card className="border-warning">
+          <div className="p-4 text-center">
+            <h3 className="mb-3 font-medium text-warning">Scan QR Code to Connect WhatsApp</h3>
+            <div className="inline-block p-2 bg-background rounded border">
+              <img 
+                src={whatsappQr} 
+                alt="WhatsApp QR Code" 
+                className="w-64 h-64" 
+                style={{ maxWidth: "100%" }}
+              />
+            </div>
+            <p className="mt-3 text-sm text-text-muted">
+              Open WhatsApp → Settings → Linked Devices → Link a Device
+            </p>
+            <Button variant="outline" size="sm" onClick={fetchQrCode} className="mt-2">
+              <RefreshCw className="h-4 w-4 mr-1" />
+              Refresh QR Code
+            </Button>
+          </div>
+        </Card>
+      )}
 
       <Card title="WhatsApp Sources">
         <div className="mb-4 flex items-center justify-between">
