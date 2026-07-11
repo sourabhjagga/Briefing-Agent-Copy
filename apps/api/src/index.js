@@ -1023,6 +1023,34 @@ function startDashboardServer(database, whatsapp, telegramUser, scheduler, summa
     }
   });
 
+  // Force WhatsApp reconnection (triggers new QR generation)
+  app.post('/api/admin/force-whatsapp-reconnect', async (req, res) => {
+    try {
+      if (!evolutionClient) {
+        return res.status(503).json({ error: 'Evolution API not configured' });
+      }
+
+      // Force Evolution API to restart the instance connection
+      await evolutionClient.http.post(`/instance/restart/${evolutionClient.instanceName}`);
+      
+      logger.info('WhatsApp instance restart triggered - new QR will be generated');
+
+      // Wait a bit then check status
+      await new Promise(r => setTimeout(r, 3000));
+      const state = await evolutionClient.getConnectionState();
+      
+      res.json({
+        success: true,
+        message: 'Instance restart triggered',
+        state,
+        qrRequired: state === 'connecting' || state === 'close'
+      });
+    } catch (err) {
+      logger.error(`Force reconnect failed: ${err.message}`);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   app.get('/api/cookies/status', (req, res) => {
     const cookieSites = database.getAllCookieSites();
     const seen = new Set();
