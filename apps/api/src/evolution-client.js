@@ -79,6 +79,7 @@ class EvolutionApiClient {
       
       // Verify connection is actually open before proceeding
       const finalState = await this.getConnectionState();
+      logger.info(`Final WhatsApp connection state after wait: ${finalState}`);
       if (finalState === 'open' || finalState === 'connected') {
         this.isReady = true;
         logger.info(`WhatsApp connection confirmed: ${finalState}`);
@@ -147,7 +148,7 @@ class EvolutionApiClient {
       logger.info(`WhatsApp connection state: ${state}`);
       
       if (state === 'open' || state === 'connected') {
-        this.isReady = true;
+        // Don't set isReady here - let initialize() handle it after final verification
         this.latestQr = null;
         return true;
       }
