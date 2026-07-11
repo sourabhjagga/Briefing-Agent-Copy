@@ -175,9 +175,32 @@ class EvolutionApiClient {
   async _getQrCode() {
     try {
       const res = await this.http.get(`/instance/connect/${this.instanceName}`);
-      return res.data?.qrcode?.code || res.data?.qrcode?.base64 || res.data?.base64 || null;
+      const raw = res.data?.qrcode?.base64 || res.data?.base64 || res.data?.qrcode?.code || null;
+      if (raw) {
+        return raw;
+      }
+      return null;
     } catch (err) {
       logger.debug(`Get QR failed: ${err.message}`);
+      return null;
+    }
+  }
+
+  async fetchFreshQr() {
+    try {
+      const state = await this.getConnectionState();
+      if (state === 'open' || state === 'connected') {
+        this.latestQr = null;
+        return null;
+      }
+      const qr = await this._getQrCode();
+      if (qr) {
+        this.latestQr = qr;
+        logger.info('Fresh QR code fetched on demand');
+      }
+      return qr;
+    } catch (err) {
+      logger.debug(`Fetch fresh QR failed: ${err.message}`);
       return null;
     }
   }

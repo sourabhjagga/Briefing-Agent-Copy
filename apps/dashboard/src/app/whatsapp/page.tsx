@@ -53,7 +53,6 @@ export default function WhatsAppPage() {
   const [deleteId, setDeleteId] = useState<number | null>(null);
   const [discoverEnabled, setDiscoverEnabled] = useState(false);
   const [form, setForm] = useState({ name: "", source_id: "", category_slug: "" });
-  const [whatsappQr, setWhatsAppQr] = useState<string | null>(null);
   const [whatsappStatus, setWhatsAppStatus] = useState<string>("unknown");
   const { toast } = useToast();
   const queryClient = useQueryClient();
@@ -70,9 +69,6 @@ export default function WhatsAppPage() {
   useEffect(() => {
     if (health) {
       setWhatsAppStatus(health.whatsapp);
-      if (health.whatsappQr) {
-        setWhatsAppQr(health.whatsappQr);
-      }
     }
   }, [health]);
 
@@ -246,28 +242,19 @@ export default function WhatsAppPage() {
     },
   ];
 
-  // Fetch QR code when disconnected
-  const fetchQrCode = async () => {
-    try {
-      const response = await fetch("/api/whatsapp/qr");
-      if (response.ok) {
-        const blob = await response.blob();
-        const url = URL.createObjectURL(blob);
-        setWhatsAppQr(url);
-        toast("QR code refreshed", "success");
-      } else {
-        const error = await response.json();
-        toast(error.error || "Failed to fetch QR code", "error");
-      }
-    } catch (err) {
-      toast("Failed to fetch QR code", "error");
-    }
+  // Refresh timestamp for cache-busting QR image
+  const [qrTimestamp, setQrTimestamp] = useState(Date.now());
+
+  const fetchQrCode = () => {
+    if (whatsappStatus !== "connecting" && whatsappStatus !== "close") return;
+    setQrTimestamp(Date.now());
+    toast("QR code refreshed", "success");
   };
 
-  // Trigger QR fetch when status changes to connecting/close
+  // Refresh QR when status changes to connecting/close
   useEffect(() => {
     if (whatsappStatus === "connecting" || whatsappStatus === "close") {
-      fetchQrCode();
+      setQrTimestamp(Date.now());
     }
   }, [whatsappStatus]);
 
@@ -298,16 +285,20 @@ export default function WhatsAppPage() {
       </div>
 
       {/* QR Code Display when disconnected */}
-      {!isConnected && whatsappQr && (
+      {!isConnected && (
         <Card className="border-warning">
           <div className="p-4 text-center">
             <h3 className="mb-3 font-medium text-warning">Scan QR Code to Connect WhatsApp</h3>
             <div className="inline-block p-2 bg-background rounded border">
               <img 
-                src={whatsappQr} 
+                src={`/api/whatsapp/qr?t=${qrTimestamp}`}
                 alt="WhatsApp QR Code" 
                 className="w-64 h-64" 
                 style={{ maxWidth: "100%" }}
+                onError={(e) => {
+                  // If image fails to load, show placeholder
+                  (e.target as HTMLImageElement).style.display = 'none';
+                }}
               />
             </div>
             <p className="mt-3 text-sm text-text-muted">
