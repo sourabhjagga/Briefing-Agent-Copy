@@ -944,6 +944,42 @@ function startDashboardServer(database, whatsapp, telegramUser, scheduler, summa
     }
   });
 
+  // Database cleanup endpoint — clears messages, consolidates forum types, removes null source_type
+  app.post('/api/admin/cleanup-db', (req, res) => {
+    try {
+      // 1. Clear messages and source_instances
+      database.db.prepare('DELETE FROM messages').run();
+      database.db.prepare('DELETE FROM source_instances').run();
+      logger.info('Cleared messages and source_instances tables');
+
+      // 2. Consolidate cc-forum -> cc-forums
+      const forumSources = database.db.prepare('SELECT id, name FROM sources WHERE type = ?').all('cc-forum');
+      for (const src of forumSources) {
+        database.db.prepare('UPDATE sources SET type = ? WHERE id = ?').run('cc-forums', src.id);
+        logger.info(`Updated source ${src.name} (id: ${src.id}) -> cc-forums`);
+      }
+
+      // 3. Reset WhatsApp scraper health
+      database.db.prepare('DELETE FROM scraper_health WHERE source_type LIKE ?').run('%whatsapp%');
+      logger.info('Reset WhatsApp scraper health');
+
+      // 4. Verify
+      const msgCount = database.db.prepare('SELECT COUNT(*) as c FROM messages').get();
+      const sources = database.db.prepare('SELECT id, name, type FROM sources WHERE type LIKE ?').all('%forum%');
+
+      res.json({
+        success: true,
+        message: 'Database cleanup complete',
+        messagesCleared: msgCount.c,
+        forumSourcesUpdated: forumSources.length,
+        remainingForumSources: sources
+      });
+    } catch (err) {
+      logger.error(`Database cleanup failed: ${err.message}`);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   app.get('/api/cookies/status', (req, res) => {
     const cookieSites = database.getAllCookieSites();
     const seen = new Set();
