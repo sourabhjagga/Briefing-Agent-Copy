@@ -266,6 +266,25 @@ class EvolutionApiClient {
       const webhookEndpoint = `${this.webhookUrl}/api/whatsapp/webhook`;
       logger.debug(`Attempting webhook setup: ${webhookEndpoint}`);
       
+      // Evolution API v2.3.7 valid events (from API error response)
+      const validEvents = [
+        'MESSAGES_UPSERT',
+        'MESSAGES_UPDATE',
+        'MESSAGES_DELETE',
+        'SEND_MESSAGE',
+        'CONNECTION_UPDATE',
+        'QRCODE_UPDATED',
+        'CHATS_SET',
+        'CHATS_UPSERT',
+        'CHATS_DELETE',
+        'CONTACTS_SET',
+        'CONTACTS_UPSERT',
+        'GROUPS_UPSERT',
+        'GROUP_UPDATE',
+        'GROUP_PARTICIPANTS_UPDATE',
+        'PRESENCE_UPDATE'
+      ];
+      
       // Try webhook setup with retry - Evolution API v2.3.7 expects webhook object
       for (let attempt = 1; attempt <= 3; attempt++) {
         try {
@@ -275,24 +294,7 @@ class EvolutionApiClient {
               url: webhookEndpoint,
               webhook_by_events: true,
               webhook_base64: false,
-              events: [
-                'MESSAGES_UPSERT',
-                'MESSAGES_UPDATE',
-                'MESSAGES_DELETE',
-                'SEND_MESSAGE',
-                'CONNECTION_UPDATE',
-                'QRCODE_UPDATED',
-                'CHATS_SET',
-                'CHATS_UPSERT',
-                'CHATS_DELETE',
-                'CONTACTS_SET',
-                'CONTACTS_UPSERT',
-                'CONTACTS_DELETE',
-                'GROUPS_UPSERT',
-                'GROUPS_UPDATE',
-                'GROUP_PARTICIPANTS_UPDATE',
-                'PRESENCE_UPDATE'
-              ]
+              events: validEvents
             }
           });
           
@@ -323,8 +325,10 @@ class EvolutionApiClient {
     for (let attempt = 1; attempt <= 3; attempt++) {
       try {
         // Evolution API v2.3.7 requires getParticipants query param
+        // Increase timeout for this call as it can be slow
         const res = await this.http.get(`/group/fetchAllGroups/${this.instanceName}`, {
-          params: { getParticipants: true }
+          params: { getParticipants: true },
+          timeout: 60000
         });
         const groups = res.data || [];
         
