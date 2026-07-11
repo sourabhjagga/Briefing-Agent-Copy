@@ -192,6 +192,7 @@ class EvolutionApiClient {
       const webhookEndpoint = `${this.webhookUrl}/api/whatsapp/webhook`;
       
       await this.http.post(`/webhook/set/${this.instanceName}`, {
+        enabled: true,
         url: webhookEndpoint,
         webhook_by_events: true,
         webhook_base64: false,
@@ -290,7 +291,9 @@ class EvolutionApiClient {
     try {
       await this.http.post(`/message/sendText/${this.instanceName}`, {
         number: jid.replace('@s.whatsapp.net', '').replace('@g.us', ''),
-        text: text,
+        textMessage: {
+          text: text
+        },
         delay: 1000,
         linkPreview: false
       });
