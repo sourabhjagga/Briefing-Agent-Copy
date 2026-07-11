@@ -264,6 +264,7 @@ class EvolutionApiClient {
 
     try {
       const webhookEndpoint = `${this.webhookUrl}/api/whatsapp/webhook`;
+      logger.debug(`Attempting webhook setup: ${webhookEndpoint}`);
       
       // Try webhook setup with retry
       for (let attempt = 1; attempt <= 3; attempt++) {
@@ -297,8 +298,9 @@ class EvolutionApiClient {
           return;
         } catch (err) {
           const status = err.response?.status;
-          const data = err.response?.data;
-          logger.error(`Webhook setup attempt ${attempt}/3 failed (${status}): ${err.message}`, { response: data });
+          const responseData = err.response?.data;
+          const errorMsg = responseData ? JSON.stringify(responseData) : err.message;
+          logger.error(`Webhook setup attempt ${attempt}/3 failed (${status}): ${errorMsg}`);
           if (attempt < 3) {
             await new Promise(r => setTimeout(r, 3000 * attempt));
           }
@@ -307,8 +309,9 @@ class EvolutionApiClient {
       logger.error('Webhook setup failed after 3 attempts');
     } catch (err) {
       const status = err.response?.status;
-      const data = err.response?.data;
-      logger.error(`Failed to setup webhook: ${err.message}`, { status, response: data });
+      const responseData = err.response?.data;
+      const errorMsg = responseData ? JSON.stringify(responseData) : err.message;
+      logger.error(`Failed to setup webhook: ${errorMsg}`, { status });
     }
   }
 
@@ -337,8 +340,9 @@ class EvolutionApiClient {
         return;
       } catch (err) {
         const status = err.response?.status;
-        const data = err.response?.data;
-        logger.error(`Group sync attempt ${attempt}/3 failed (${status}): ${err.message}`, { response: data });
+        const responseData = err.response?.data;
+        const errorMsg = responseData ? JSON.stringify(responseData) : err.message;
+        logger.error(`Group sync attempt ${attempt}/3 failed (${status}): ${errorMsg}`);
         if (attempt < 3) {
           await new Promise(r => setTimeout(r, 3000 * attempt));
         }
