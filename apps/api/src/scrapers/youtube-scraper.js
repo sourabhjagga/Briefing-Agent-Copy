@@ -72,6 +72,8 @@ class YoutubeScraper {
           channelId = await this.resolveChannelId(channelId);
           // Update database cache
           this.database.db.prepare('UPDATE sources SET source_id = ? WHERE id = ?').run(channelId, source.id);
+          // Keep in-memory object in sync so upsertScraperHealth uses the resolved ID
+          source.source_id = channelId;
           logger.info(`✅ Resolved "${source.name}" to channel ID: ${channelId}`);
         } catch (resolveErr) {
           logger.error(`❌ Failed to resolve handle "${channelId}" for "${source.name}": ${resolveErr.message}`);

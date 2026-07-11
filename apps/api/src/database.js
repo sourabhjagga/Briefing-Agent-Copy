@@ -24,6 +24,8 @@ class DatabaseManager {
     this.db.pragma('foreign_keys = ON');
     this._initSchema();
     this._migrateScraperHealth();
+    this._migrateDuplicateCategories();
+    this._migrateStaleScraperHealth();
     this._compileStatements();
     logger.info(`✅ Database initialized: ${resolvedPath}`);
   }
@@ -230,6 +232,73 @@ class DatabaseManager {
       logger.info('✅ scraper_health migration complete.');
     } catch (err) {
       logger.warn(`⚠️ scraper_health migration warning (non-fatal): ${err.message}`);
+    }
+  }
+
+  /**
+   * Merge duplicate "cc-forum" category into "cc-forums".
+   * The user may have accidentally created a "cc-forum" slug (typo) alongside
+   * the correct "cc-forums" slug. This migrates all sources and schedule rules
+   * from the typo category, then deletes it.
+   */
+  _migrateDuplicateCategories() {
+    try {
+      const typo = this.db.prepare(`SELECT id FROM categories WHERE slug = 'cc-forum'`).get();
+      if (!typo) return; // Nothing to migrate
+
+      const correct = this.db.prepare(`SELECT id FROM categories WHERE slug = 'cc-forums'`).get();
+      if (correct) {
+        // Both exist — merge sources from the typo into the correct category
+        this.db.prepare(`UPDATE sources SET category_slug = 'cc-forums' WHERE category_slug = 'cc-forum'`).run();
+        this.db.prepare(`UPDATE sources SET type = REPLACE(type, 'cc-forum-', 'cc-forums-') WHERE category_slug = 'cc-forums' AND type LIKE 'cc-forum-%'`).run();
+        this.db.prepare(`UPDATE schedule_rules SET category_slug = 'cc-forums' WHERE category_slug = 'cc-forum'`).run();
+      } else {
+        // Only the typo exists — rename it
+        this.db.prepare(`UPDATE categories SET slug = 'cc-forums', display_name = 'CC Forums' WHERE slug = 'cc-forum'`).run();
+        this.db.prepare(`UPDATE sources SET category_slug = 'cc-forums' WHERE category_slug = 'cc-forum'`).run();
+        this.db.prepare(`UPDATE sources SET type = REPLACE(type, 'cc-forum-', 'cc-forums-') WHERE type LIKE 'cc-forum-%'`).run();
+        this.db.prepare(`UPDATE schedule_rules SET category_slug = 'cc-forums' WHERE category_slug = 'cc-forum'`).run();
+      }
+
+      // Delete the duplicate category row
+      this.db.prepare(`DELETE FROM categories WHERE slug = 'cc-forum'`).run();
+      logger.info('🔧 Migrated duplicate cc-forum category into cc-forums.');
+    } catch (err) {
+      logger.warn(`⚠️ Duplicate category migration warning (non-fatal): ${err.message}`);
+    }
+  }
+
+  /**
+   * Remove stale scraper_health rows caused by the YouTube handle→channel-ID
+   * resolution bug where the in-memory source_id wasn't updated before calling
+   * upsertScraperHealth, creating two rows for the same channel (one with the
+   * handle, one with the UC-ID).
+   *
+   * For every YouTube source, keep only the row whose source_id matches the
+   * current sources.source_id (the resolved UC-ID). Delete any leftover rows
+   * whose source_id doesn't match any active sources row.
+   */
+  _migrateStaleScraperHealth() {
+    try {
+      // Find scraper_health rows whose source_id doesn't match any current sources.source_id
+      // and whose source_type looks like a YouTube type.
+      const stale = this.db.prepare(`
+        SELECT sh.id, sh.source_id, sh.source_type
+        FROM scraper_health sh
+        LEFT JOIN sources s ON s.source_id = sh.source_id
+        WHERE s.id IS NULL
+          AND (sh.source_type LIKE '%-youtube' OR sh.source_type LIKE '%youtube%')
+      `).all();
+
+      if (stale.length === 0) return;
+
+      const deleteStmt = this.db.prepare(`DELETE FROM scraper_health WHERE id = ?`);
+      for (const row of stale) {
+        deleteStmt.run(row.id);
+      }
+      logger.info(`🔧 Cleaned up ${stale.length} stale YouTube scraper_health rows.`);
+    } catch (err) {
+      logger.warn(`⚠️ Stale scraper_health migration warning (non-fatal): ${err.message}`);
     }
   }
 
