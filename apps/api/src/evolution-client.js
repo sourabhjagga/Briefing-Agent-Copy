@@ -266,32 +266,34 @@ class EvolutionApiClient {
       const webhookEndpoint = `${this.webhookUrl}/api/whatsapp/webhook`;
       logger.debug(`Attempting webhook setup: ${webhookEndpoint}`);
       
-      // Try webhook setup with retry
+      // Try webhook setup with retry - Evolution API v2.3.7 expects webhook object
       for (let attempt = 1; attempt <= 3; attempt++) {
         try {
           await this.http.post(`/webhook/set/${this.instanceName}`, {
-            enabled: true,
-            url: webhookEndpoint,
-            webhook_by_events: true,
-            webhook_base64: false,
-            events: [
-              'MESSAGES_UPSERT',
-              'MESSAGES_UPDATE',
-              'MESSAGES_DELETE',
-              'SEND_MESSAGE',
-              'CONNECTION_UPDATE',
-              'QRCODE_UPDATED',
-              'CHATS_SET',
-              'CHATS_UPSERT',
-              'CHATS_DELETE',
-              'CONTACTS_SET',
-              'CONTACTS_UPSERT',
-              'CONTACTS_DELETE',
-              'GROUPS_UPSERT',
-              'GROUPS_UPDATE',
-              'GROUP_PARTICIPANTS_UPDATE',
-              'PRESENCE_UPDATE'
-            ]
+            webhook: {
+              enabled: true,
+              url: webhookEndpoint,
+              webhook_by_events: true,
+              webhook_base64: false,
+              events: [
+                'MESSAGES_UPSERT',
+                'MESSAGES_UPDATE',
+                'MESSAGES_DELETE',
+                'SEND_MESSAGE',
+                'CONNECTION_UPDATE',
+                'QRCODE_UPDATED',
+                'CHATS_SET',
+                'CHATS_UPSERT',
+                'CHATS_DELETE',
+                'CONTACTS_SET',
+                'CONTACTS_UPSERT',
+                'CONTACTS_DELETE',
+                'GROUPS_UPSERT',
+                'GROUPS_UPDATE',
+                'GROUP_PARTICIPANTS_UPDATE',
+                'PRESENCE_UPDATE'
+              ]
+            }
           });
           
           logger.info(`Webhook configured for ${this.instanceName} at ${webhookEndpoint}`);
@@ -320,7 +322,10 @@ class EvolutionApiClient {
     
     for (let attempt = 1; attempt <= 3; attempt++) {
       try {
-        const res = await this.http.get(`/group/fetchAllGroups/${this.instanceName}`);
+        // Evolution API v2.3.7 requires getParticipants query param
+        const res = await this.http.get(`/group/fetchAllGroups/${this.instanceName}`, {
+          params: { getParticipants: true }
+        });
         const groups = res.data || [];
         
         let count = 0;
