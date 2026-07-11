@@ -76,7 +76,7 @@ services:
       start_period: 15s
 
   evolution-api:
-    image: atendai/evolution-api:v2.1.1
+    image: evoapicloud/evolution-api:v2.1.1
     container_name: evolution-api
     restart: unless-stopped
     ports:
