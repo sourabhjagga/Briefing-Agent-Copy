@@ -1023,8 +1023,8 @@ function startDashboardServer(database, whatsapp, telegramUser, scheduler, summa
     }
   });
 
-  // Force WhatsApp reconnection (triggers new QR generation)
-  app.post('/api/admin/force-whatsapp-reconnect', async (req, res) => {
+  // Force WhatsApp reconnection (triggers new QR generation) — GET/POST for dashboard convenience
+  app.all('/api/admin/force-whatsapp-reconnect', async (req, res) => {
     try {
       if (!evolutionClient) {
         return res.status(503).json({ error: 'Evolution API not configured' });
