@@ -209,6 +209,33 @@ function startDashboardServer(database, whatsapp, telegramUser, scheduler, summa
     }
   });
 
+  // Debug endpoint to verify message collection
+  app.get('/api/debug/messages', (req, res) => {
+    try {
+      const limit = parseInt(req.query.limit) || 10;
+      const messages = database.db.prepare(`
+        SELECT m.id, m.groupName, m.groupId, m.chatType, m.senderName, 
+               m.body, m.timestamp, m.sourceType, m.instanceFk,
+               si.source_fk, s.name as sourceName, s.type as sourceType
+        FROM messages m
+        LEFT JOIN source_instances si ON m.instance_fk = si.id
+        LEFT JOIN sources s ON si.source_fk = s.id
+        ORDER BY m.timestamp DESC
+        LIMIT ?
+      `).all(limit);
+      
+      const counts = database.db.prepare(`
+        SELECT sourceType, COUNT(*) as count 
+        FROM messages 
+        GROUP BY sourceType
+      `).all();
+      
+      res.json({ recent: messages, bySourceType: counts });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   app.get('/api/sources', (req, res) => {
     try {
       res.json(database.getAllSources());
