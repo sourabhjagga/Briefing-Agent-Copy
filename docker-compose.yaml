@@ -102,11 +102,11 @@ services:
         condition: service_healthy
         restart: false
     healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:8080/ || exit 1"]
-      interval: 10s
-      timeout: 5s
+      test: ["CMD-SHELL", "node -e \"require('net').connect({port: 8080, host: 'localhost'}, () => process.exit(0)).on('error', () => process.exit(1))\""]
+      interval: 15s
+      timeout: 10s
       retries: 10
-      start_period: 60s
+      start_period: 90s
     volumes:
       - evolution_data:/evolution/instances
 
