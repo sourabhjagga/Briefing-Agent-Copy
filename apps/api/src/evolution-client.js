@@ -109,7 +109,6 @@ class EvolutionApiClient {
     const res = await this.http.post('/instance/create', {
       instanceName: this.instanceName,
       token: this.apiKey,
-      number: this.instanceName,
       qrcode: true,
       integration: 'WHATSAPP-BAILEYS',
       rejectCall: true,
@@ -120,7 +119,7 @@ class EvolutionApiClient {
       readStatus: false,
       syncFullHistory: false
     });
-    this.instanceId = res.data?.instance?.instanceId;
+    this.instanceId = res.data?.instance?.instanceId || res.data?.instanceId;
     return res.data;
   }
 
