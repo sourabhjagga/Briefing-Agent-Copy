@@ -980,6 +980,49 @@ function startDashboardServer(database, whatsapp, telegramUser, scheduler, summa
     }
   });
 
+  // Session persistence verification endpoint
+  app.get('/api/admin/verify-sessions', async (req, res) => {
+    try {
+      const results = {
+        evolutionApi: { connected: false, instanceExists: false, qrRequired: false, groupsSynced: 0, error: null },
+        telegramUser: { authorized: false },
+        volumes: { postgresData: false, evolutionData: false, appData: false }
+      };
+
+      // Check Evolution API instance
+      if (evolutionClient) {
+        try {
+          const state = await evolutionClient.getConnectionState();
+          results.evolutionApi.connected = state === 'open' || state === 'connected';
+          results.evolutionApi.instanceExists = true;
+          results.evolutionApi.qrRequired = state === 'connecting' || state === 'close';
+          
+          if (results.evolutionApi.connected) {
+            const groups = await evolutionClient.getAllChats();
+            results.evolutionApi.groupsSynced = groups.length;
+          }
+        } catch (e) {
+          results.evolutionApi.error = e.message;
+        }
+      }
+
+      // Check Telegram User
+      if (telegramUser) {
+        results.telegramUser.authorized = telegramUser.isReady || false;
+      }
+
+      // Check volume mounts
+      const fs = require('fs');
+      results.volumes.postgresData = fs.existsSync('/var/lib/postgresql/data');
+      results.volumes.evolutionData = fs.existsSync('/evolution/instances');
+      results.volumes.appData = fs.existsSync('/app/data');
+
+      res.json(results);
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   app.get('/api/cookies/status', (req, res) => {
     const cookieSites = database.getAllCookieSites();
     const seen = new Set();
