@@ -103,6 +103,9 @@ class EvolutionApiClient {
     logger.info('WhatsApp connection confirmed: open');
     this.latestQr = null;
     
+    // Small delay to let Evolution API fully stabilize after connection
+    await new Promise(r => setTimeout(r, 2000));
+    
     // Setup webhook and sync groups
     if (this.webhookUrl) {
       await this._setupWebhook();
@@ -262,60 +265,86 @@ class EvolutionApiClient {
     try {
       const webhookEndpoint = `${this.webhookUrl}/api/whatsapp/webhook`;
       
-      await this.http.post(`/webhook/set/${this.instanceName}`, {
-        enabled: true,
-        url: webhookEndpoint,
-        webhook_by_events: true,
-        webhook_base64: false,
-        events: [
-          'MESSAGES_UPSERT',
-          'MESSAGES_UPDATE',
-          'MESSAGES_DELETE',
-          'SEND_MESSAGE',
-          'CONNECTION_UPDATE',
-          'QRCODE_UPDATED',
-          'CHATS_SET',
-          'CHATS_UPSERT',
-          'CHATS_DELETE',
-          'CONTACTS_SET',
-          'CONTACTS_UPSERT',
-          'CONTACTS_DELETE',
-          'GROUPS_UPSERT',
-          'GROUPS_UPDATE',
-          'GROUP_PARTICIPANTS_UPDATE',
-          'PRESENCE_UPDATE'
-        ]
-      });
-      
-      logger.info(`Webhook configured for ${this.instanceName} at ${webhookEndpoint}`);
+      // Try webhook setup with retry
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        try {
+          await this.http.post(`/webhook/set/${this.instanceName}`, {
+            enabled: true,
+            url: webhookEndpoint,
+            webhook_by_events: true,
+            webhook_base64: false,
+            events: [
+              'MESSAGES_UPSERT',
+              'MESSAGES_UPDATE',
+              'MESSAGES_DELETE',
+              'SEND_MESSAGE',
+              'CONNECTION_UPDATE',
+              'QRCODE_UPDATED',
+              'CHATS_SET',
+              'CHATS_UPSERT',
+              'CHATS_DELETE',
+              'CONTACTS_SET',
+              'CONTACTS_UPSERT',
+              'CONTACTS_DELETE',
+              'GROUPS_UPSERT',
+              'GROUPS_UPDATE',
+              'GROUP_PARTICIPANTS_UPDATE',
+              'PRESENCE_UPDATE'
+            ]
+          });
+          
+          logger.info(`Webhook configured for ${this.instanceName} at ${webhookEndpoint}`);
+          return;
+        } catch (err) {
+          const status = err.response?.status;
+          const data = err.response?.data;
+          logger.error(`Webhook setup attempt ${attempt}/3 failed (${status}): ${err.message}`, { response: data });
+          if (attempt < 3) {
+            await new Promise(r => setTimeout(r, 3000 * attempt));
+          }
+        }
+      }
+      logger.error('Webhook setup failed after 3 attempts');
     } catch (err) {
-      logger.error(`Failed to setup webhook: ${err.message}`);
+      const status = err.response?.status;
+      const data = err.response?.data;
+      logger.error(`Failed to setup webhook: ${err.message}`, { status, response: data });
     }
   }
 
   async _syncGroups() {
     logger.info('Syncing WhatsApp groups from Evolution API...');
-    try {
-      const res = await this.http.get(`/group/fetchAllGroups/${this.instanceName}`);
-      const groups = res.data || [];
-      
-      let count = 0;
-      for (const group of groups) {
-        if (group.id && group.subject) {
-          const id = group.id.toLowerCase();
-          this.chatNameMap[id] = group.subject;
-          count++;
+    
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        const res = await this.http.get(`/group/fetchAllGroups/${this.instanceName}`);
+        const groups = res.data || [];
+        
+        let count = 0;
+        for (const group of groups) {
+          if (group.id && group.subject) {
+            const id = group.id.toLowerCase();
+            this.chatNameMap[id] = group.subject;
+            count++;
+          }
+        }
+        
+        this._saveChatNameMap();
+        logger.info(`Synced ${count} groups from Evolution API`);
+        
+        // Also refresh targets from database
+        this._refreshTargets();
+        return;
+      } catch (err) {
+        const status = err.response?.status;
+        const data = err.response?.data;
+        logger.error(`Group sync attempt ${attempt}/3 failed (${status}): ${err.message}`, { response: data });
+        if (attempt < 3) {
+          await new Promise(r => setTimeout(r, 3000 * attempt));
         }
       }
-      
-      this._saveChatNameMap();
-      logger.info(`Synced ${count} groups from Evolution API`);
-      
-      // Also refresh targets from database
-      this._refreshTargets();
-    } catch (err) {
-      logger.error(`Failed to sync groups: ${err.message}`);
     }
+    logger.error('Group sync failed after 3 attempts');
   }
 
   _refreshTargets() {
