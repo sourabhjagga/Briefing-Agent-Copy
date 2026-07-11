@@ -15,9 +15,11 @@ require('dotenv').config();
 const express = require('express');
 const path = require('path');
 const fs = require('fs');
+const crypto = require('crypto');
 
 const logger = require('./logger');
 const MessageDatabase = require('./database');
+const EvolutionApiClient = require('./evolution-client');
 const WhatsAppListener = require('./whatsapp');
 const TelegramUserListener = require('./telegram-user');
 const TelegramBotDispatcher = require('./telegram-bot');
@@ -29,6 +31,9 @@ const YoutubeScraper = require('./scrapers/youtube-scraper');
 const ApiScraper = require('./scrapers/api-scraper');
 const RssScraper = require('./scrapers/rss-scraper');
 const EmailScraper = require('./scrapers/email-scraper');
+
+// Feature flag: Use Evolution API for WhatsApp instead of Baileys
+const USE_EVOLUTION_API = process.env.USE_EVOLUTION_API === 'true';
 
 function validateConfig() {
   const required = ['TELEGRAM_BOT_TOKEN', 'TELEGRAM_CHAT_ID', 'GEMINI_API_KEY'];
@@ -45,6 +50,24 @@ function validateConfig() {
 
   if (!process.env.WHATSAPP_ADMIN_JID) {
     logger.warn('⚠️ WHATSAPP_ADMIN_JID is not set. WhatsApp alert delivery via sendSystemAlert will be skipped.');
+  }
+
+  // Validate Evolution API config if enabled
+  if (USE_EVOLUTION_API) {
+    if (!process.env.EVOLUTION_API_KEY) {
+      logger.error('❌ USE_EVOLUTION_API=true but EVOLUTION_API_KEY is not set');
+      process.exit(1);
+    }
+    if (!process.env.EVOLUTION_API_URL) {
+      logger.error('❌ USE_EVOLUTION_API=true but EVOLUTION_API_URL is not set');
+      process.exit(1);
+    }
+    if (!process.env.EVOLUTION_WEBHOOK_URL) {
+      logger.warn('⚠️ EVOLUTION_WEBHOOK_URL not set. Webhooks will not be configured automatically.');
+    }
+    logger.info('🔄 Using Evolution API for WhatsApp integration');
+  } else {
+    logger.info('🔄 Using Baileys (legacy) for WhatsApp integration');
   }
 }
 
@@ -119,13 +142,29 @@ function createBotInstances(database, summarizer) {
   return botInstances;
 }
 
-function startDashboardServer(database, whatsapp, telegramUser, scheduler, summarizer, botInstances, scrapers = {}) {
+function startDashboardServer(database, whatsapp, telegramUser, scheduler, summarizer, botInstances, scrapers = {}, evolutionClient = null) {
   const PORT = parseInt(process.env.HEALTH_PORT || '3000', 10);
   const app = express();
 
   app.use(express.json());
   // Disable redirect so /sources doesn't get redirected to /sources/ (which breaks the catch-all)
   app.use(express.static(path.join(__dirname, '../public'), { redirect: false }));
+
+  // Evolution API webhook endpoint
+  if (USE_EVOLUTION_API && evolutionClient) {
+    app.post('/api/whatsapp/webhook', express.raw({ type: 'application/json' }), async (req, res) => {
+      try {
+        const signature = req.headers['x-hub-signature-256'] || req.headers['x-webhook-signature'];
+        const payload = req.body ? JSON.parse(req.body.toString()) : {};
+        const result = await evolutionClient.handleWebhook(payload, signature);
+        res.json(result);
+      } catch (err) {
+        logger.error(`Evolution API webhook error: ${err.message}`);
+        res.status(500).json({ error: err.message });
+      }
+    });
+    logger.info('🔗 Evolution API webhook endpoint registered at /api/whatsapp/webhook');
+  }
 
   app.get('/health', (req, res) => {
     const waStatus = whatsapp.getStatus();
@@ -663,8 +702,12 @@ function startDashboardServer(database, whatsapp, telegramUser, scheduler, summa
     }
   });
 
+  // WhatsApp discovery - works for both Evolution API and Baileys
   app.get('/api/whatsapp/discover', async (req, res) => {
     try {
+      if (!whatsapp) {
+        return res.status(503).json({ error: 'WhatsApp not configured' });
+      }
       const groups = await whatsapp.discoverChats();
       res.json(groups);
     } catch (err) {
@@ -689,7 +732,9 @@ function startDashboardServer(database, whatsapp, telegramUser, scheduler, summa
       }
       const type = `${category_slug}-whatsapp`;
       database.addSource(name, source_id.trim(), type, category_slug);
-      whatsapp._refreshTargets();
+      if (whatsapp && typeof whatsapp._refreshTargets === 'function') {
+        whatsapp._refreshTargets();
+      }
       res.json({ success: true });
     } catch (err) {
       res.status(500).json({ error: err.message });
@@ -701,9 +746,29 @@ function startDashboardServer(database, whatsapp, telegramUser, scheduler, summa
       const id = parseIdParam(req.params.id);
       if (!id) return res.status(400).json({ error: 'Invalid ID' });
       database.deleteSource(id);
-      whatsapp._refreshTargets();
+      if (whatsapp && typeof whatsapp._refreshTargets === 'function') {
+        whatsapp._refreshTargets();
+      }
       res.json({ success: true });
     } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Evolution API webhook endpoint
+  // This receives incoming WhatsApp messages from Evolution API
+  app.post('/api/whatsapp/webhook', express.raw({ type: 'application/json' }), async (req, res) => {
+    if (!USE_EVOLUTION_API || !evolutionClient) {
+      return res.status(404).json({ error: 'Evolution API not enabled' });
+    }
+    
+    const signature = req.headers['x-hub-signature-256'] || req.headers['x-webhook-signature'];
+    try {
+      const payload = JSON.parse(req.body.toString('utf8'));
+      const result = await evolutionClient.handleWebhook(payload, signature);
+      res.json(result);
+    } catch (err) {
+      logger.error(`WhatsApp webhook error: ${err.message}`);
       res.status(500).json({ error: err.message });
     }
   });
@@ -978,8 +1043,36 @@ async function main() {
   const summarizer = new Summarizer(process.env.GEMINI_API_KEY, process.env.OPENROUTER_API_KEY);
   const botInstances = createBotInstances(database, summarizer);
 
-  const whatsapp = new WhatsAppListener(database, null);
-  const telegramUser = new TelegramUserListener(database, null);
+  let whatsapp;
+  let telegramUser;
+  let evolutionClient = null;
+
+  if (USE_EVOLUTION_API) {
+    // Use Evolution API for WhatsApp
+    const EvolutionApiClient = require('./evolution-client');
+    evolutionClient = new EvolutionApiClient(database, null, {
+      baseUrl: process.env.EVOLUTION_API_URL,
+      apiKey: process.env.EVOLUTION_API_KEY,
+      instanceName: process.env.EVOLUTION_INSTANCE_NAME || 'cc-brief',
+      webhookUrl: process.env.EVOLUTION_WEBHOOK_URL,
+      webhookSecret: process.env.WEBHOOK_SECRET
+    });
+    
+    // Initialize Evolution API client (creates instance, connects, sets up webhook)
+    await evolutionClient.initialize();
+    whatsapp = evolutionClient;
+    
+    // Telegram user listener still uses Baileys
+    const TelegramUserListener = require('./telegram-user');
+    telegramUser = new TelegramUserListener(database, null);
+  } else {
+    // Legacy Baileys implementation
+    const WhatsAppListener = require('./whatsapp');
+    const TelegramUserListener = require('./telegram-user');
+    whatsapp = new WhatsAppListener(database, null);
+    telegramUser = new TelegramUserListener(database, null);
+  }
+  
   const scheduler = new Scheduler(summarizer, botInstances, database, whatsapp);
 
   const sendSystemAlert = async (message) => {
@@ -996,7 +1089,7 @@ async function main() {
     }
 
     const adminJid = process.env.WHATSAPP_ADMIN_JID;
-    if (adminJid) {
+    if (adminJid && whatsapp) {
       try {
         await whatsapp.sendMessage(adminJid, `🚨 *Session Alert*\n\n${plainMessage}`);
       } catch (err) {
@@ -1005,24 +1098,34 @@ async function main() {
     }
   };
 
-  whatsapp.onAlert = sendSystemAlert;
-  telegramUser.onAlert = sendSystemAlert;
+  if (whatsapp) {
+    whatsapp.onAlert = sendSystemAlert;
+  }
+  if (telegramUser) {
+    telegramUser.onAlert = sendSystemAlert;
+  }
 
   const apiScraper = new ApiScraper(database, sendSystemAlert);
 
+  // Global restart function - works for both implementations
   global.restartWhatsApp = async (force = false) => {
     logger.warn('🔄 Received global request to restart WhatsApp client...');
-    await whatsapp.stop();
-    if (force) {
-      const authPath = path.resolve(__dirname, '../data/baileys_auth');
-      if (fs.existsSync(authPath)) {
-        fs.rmSync(authPath, { recursive: true, force: true });
-        logger.info('🧹 Forcing clean session. Cleared baileys_auth credentials folder.');
+    if (USE_EVOLUTION_API && evolutionClient) {
+      // For Evolution API, just reconnect the instance
+      await evolutionClient.reconnect(force);
+    } else if (whatsapp && typeof whatsapp.stop === 'function') {
+      await whatsapp.stop();
+      if (force) {
+        const authPath = path.resolve(__dirname, '../data/baileys_auth');
+        if (fs.existsSync(authPath)) {
+          fs.rmSync(authPath, { recursive: true, force: true });
+          logger.info('🧹 Forcing clean session. Cleared baileys_auth credentials folder.');
+        }
       }
+      setTimeout(() => {
+        whatsapp.start().catch(err => logger.error(`WhatsApp restart failed: ${err.message}`));
+      }, 5000);
     }
-    setTimeout(() => {
-      whatsapp.start().catch(err => logger.error(`WhatsApp restart failed: ${err.message}`));
-    }, 5000);
   };
 
   const webScraper = new WebScraper(database, sendSystemAlert);
@@ -1039,7 +1142,7 @@ async function main() {
   };
 
   const healthServer = startDashboardServer(
-    database, whatsapp, telegramUser, scheduler, summarizer, botInstances, scrapers
+    database, whatsapp, telegramUser, scheduler, summarizer, botInstances, scrapers, evolutionClient
   );
 
   for (const [slug, bot] of botInstances) {
@@ -1053,8 +1156,16 @@ async function main() {
     }
   }
 
-  whatsapp.start().catch(err => logger.error(`WhatsApp listener failed: ${err.message}`));
-  telegramUser.start().catch(err => logger.error(`Telegram user listener failed: ${err.message}`));
+  // Start WhatsApp only for legacy Baileys implementation
+  // Evolution API is already initialized in main()
+  if (!USE_EVOLUTION_API && whatsapp) {
+    whatsapp.start().catch(err => logger.error(`WhatsApp listener failed: ${err.message}`));
+  }
+  
+  if (telegramUser) {
+    telegramUser.start().catch(err => logger.error(`Telegram user listener failed: ${err.message}`));
+  }
+  
   scheduler.start();
 
   webScraper.start();
@@ -1085,7 +1196,16 @@ async function main() {
     emailScraper.stop();
     rssScraper.stop();
     apiScraper.stop();
-    await whatsapp.stop();
+    
+    // Stop WhatsApp - different for Evolution API vs Baileys
+    if (whatsapp) {
+      if (USE_EVOLUTION_API) {
+        await whatsapp.stop();
+      } else {
+        await whatsapp.stop();
+      }
+    }
+    
     await telegramUser.logout();
     for (const [, bot] of botInstances) {
       try { await bot.stop(); } catch (e) { /* ignore */ }

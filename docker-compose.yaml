@@ -14,6 +14,15 @@ services:
       warp-proxy:
         condition: service_healthy
         restart: false
+      evolution-api:
+        condition: service_healthy
+        restart: false
+      postgres:
+        condition: service_healthy
+        restart: false
+      redis:
+        condition: service_healthy
+        restart: false
     volumes:
       - cc_brief_data:/app/data
       - cc_brief_logs:/app/logs
@@ -42,6 +51,13 @@ services:
       - TELEGRAM_API_ID=${TELEGRAM_API_ID}
       - TELEGRAM_API_HASH=${TELEGRAM_API_HASH}
       - TELEGRAM_PROXY=socks5://warp-proxy:9091
+      # Evolution API Configuration
+      - USE_EVOLUTION_API=${USE_EVOLUTION_API:-true}
+      - EVOLUTION_API_URL=${EVOLUTION_API_URL:-http://evolution-api:8080}
+      - EVOLUTION_API_KEY=${EVOLUTION_API_KEY}
+      - EVOLUTION_INSTANCE_NAME=${EVOLUTION_INSTANCE_NAME:-cc-brief}
+      - EVOLUTION_WEBHOOK_URL=${EVOLUTION_WEBHOOK_URL}
+      - WEBHOOK_SECRET=${WEBHOOK_SECRET}
     logging:
       driver: "json-file"
       options:
@@ -59,6 +75,76 @@ services:
       retries: 5
       start_period: 15s
 
+  evolution-api:
+    image: atendai/evolution-api:v2.1.1
+    container_name: evolution-api
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      - SERVER_TYPE=api
+      - SERVER_URL=http://evolution-api:8080
+      - DATABASE_PROVIDER=postgresql
+      - DATABASE_CONNECTION_URI=postgresql://evolution:evolution@postgres:5432/evolution?schema=public
+      - DATABASE_CONNECTION_CLIENT_NAME=evolution-api
+      - REDIS_URI=redis://redis:6379
+      - REDIS_DB=0
+      - AUTHENTICATION_API_KEY=${EVOLUTION_API_KEY}
+      - LOG_LEVEL=info
+      - CORS_ORIGIN=*
+      - CONFIG_SESSION_PHONE_CLIENT=CC Brief Agent
+      - CONFIG_SESSION_PHONE_NAME=CC Brief Agent
+    depends_on:
+      postgres:
+        condition: service_healthy
+        restart: false
+      redis:
+        condition: service_healthy
+        restart: false
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8080/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    volumes:
+      - evolution_data:/evolution/instances
+
+  postgres:
+    image: postgres:15-alpine
+    container_name: evolution-postgres
+    restart: unless-stopped
+    environment:
+      - POSTGRES_USER=evolution
+      - POSTGRES_PASSWORD=evolution
+      - POSTGRES_DB=evolution
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U evolution -d evolution"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: evolution-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
 volumes:
   cc_brief_data:
   cc_brief_logs:
+  evolution_data:
+  postgres_data:
+  redis_data:
