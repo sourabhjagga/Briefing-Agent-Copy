@@ -305,7 +305,7 @@ export default function WhatsAppPage() {
             <p className="mt-3 text-sm text-text-muted">
               Open WhatsApp → Settings → Linked Devices → Link a Device
             </p>
-            <Button variant="outline" size="sm" onClick={fetchQrCode} className="mt-2">
+            <Button variant="outline" size="sm" onClick={() => fetchQrCode(true)} className="mt-2">
               <RefreshCw className="h-4 w-4 mr-1" />
               Refresh QR Code
             </Button>
