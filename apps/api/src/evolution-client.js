@@ -77,15 +77,16 @@ class EvolutionApiClient {
       // Wait for connection and get QR if needed
       await this._waitForConnection();
       
-      // Setup webhook
-      if (this.webhookUrl) {
-        await this._setupWebhook();
+      // Setup webhook and sync groups only after connection is open
+      if (this.isReady) {
+        if (this.webhookUrl) {
+          await this._setupWebhook();
+        }
+        
+        // Sync groups
+        await this._syncGroups();
       }
       
-      // Sync groups
-      await this._syncGroups();
-      
-      this.isReady = true;
       logger.info('Evolution API client initialized successfully');
       return true;
     } catch (err) {
