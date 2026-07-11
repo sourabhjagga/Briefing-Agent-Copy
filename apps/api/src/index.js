@@ -773,6 +773,23 @@ function startDashboardServer(database, whatsapp, telegramUser, scheduler, summa
     }
   });
 
+  // WhatsApp QR Code endpoint - returns QR code as PNG image
+  app.get('/api/whatsapp/qr', (req, res) => {
+    if (!whatsapp) {
+      return res.status(503).json({ error: 'WhatsApp not configured' });
+    }
+    const status = whatsapp.getStatus();
+    if (!status.qr) {
+      return res.status(404).json({ error: 'No QR code available - WhatsApp may be connected' });
+    }
+    // Extract base64 from data URL and send as PNG
+    const base64 = status.qr.replace(/^data:image\/png;base64,/, '');
+    const img = Buffer.from(base64, 'base64');
+    res.set('Content-Type', 'image/png');
+    res.set('Cache-Control', 'no-cache, no-store, must-revalidate');
+    res.send(img);
+  });
+
   app.get('/api/cookies', (req, res) => {
     try {
       const SITES = ['youtube', 'technofino', 'desidime', 'reddit'];
