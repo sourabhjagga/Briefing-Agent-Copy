@@ -186,22 +186,27 @@ class EvolutionApiClient {
     }
   }
 
-  async fetchFreshQr() {
+  async fetchFreshQr(force = false) {
     try {
       const state = await this.getConnectionState();
       if (state === 'open' || state === 'connected') {
         this.latestQr = null;
         return null;
       }
+      // Only fetch new QR if we don't have one or explicitly requested
+      // Calling /instance/connect generates a NEW QR, invalidating the previous one
+      if (!force && this.latestQr) {
+        return this.latestQr;
+      }
       const qr = await this._getQrCode();
       if (qr) {
         this.latestQr = qr;
-        logger.info('Fresh QR code fetched on demand');
+        logger.info('QR code fetched');
       }
-      return qr;
+      return qr || this.latestQr;
     } catch (err) {
       logger.debug(`Fetch fresh QR failed: ${err.message}`);
-      return null;
+      return this.latestQr;
     }
   }
 
@@ -519,10 +524,6 @@ class EvolutionApiClient {
   async discoverChats() {
     await this._syncGroups();
     return this.getAllChats();
-  }
-
-  _refreshTargets() {
-    this._refreshTargets();
   }
 
   getAllChats() {

@@ -244,9 +244,10 @@ export default function WhatsAppPage() {
 
   // Refresh timestamp for cache-busting QR image
   const [qrTimestamp, setQrTimestamp] = useState(Date.now());
+  const [qrForce, setQrForce] = useState(false);
 
-  const fetchQrCode = () => {
-    if (whatsappStatus !== "connecting" && whatsappStatus !== "close") return;
+  const fetchQrCode = (force = false) => {
+    setQrForce(force);
     setQrTimestamp(Date.now());
     toast("QR code refreshed", "success");
   };
@@ -276,7 +277,7 @@ export default function WhatsAppPage() {
             <span className="capitalize">{whatsappStatus}</span>
           </span>
           {!isConnected && (
-            <Button variant="outline" size="sm" onClick={fetchQrCode} disabled={whatsappStatus !== "connecting" && whatsappStatus !== "close"}>
+            <Button variant="outline" size="sm" onClick={() => fetchQrCode(true)} disabled={whatsappStatus !== "connecting" && whatsappStatus !== "close"}>
               <RefreshCw className="h-4 w-4 mr-1" />
               Refresh QR
             </Button>
@@ -291,7 +292,7 @@ export default function WhatsAppPage() {
             <h3 className="mb-3 font-medium text-warning">Scan QR Code to Connect WhatsApp</h3>
             <div className="inline-block p-2 bg-background rounded border">
               <img 
-                src={`/api/whatsapp/qr?t=${qrTimestamp}`}
+                src={`/api/whatsapp/qr?t=${qrTimestamp}${qrForce ? '&force=1' : ''}`}
                 alt="WhatsApp QR Code" 
                 className="w-64 h-64" 
                 style={{ maxWidth: "100%" }}

@@ -774,14 +774,15 @@ function startDashboardServer(database, whatsapp, telegramUser, scheduler, summa
   });
 
   // WhatsApp QR Code endpoint - returns QR code as PNG image
+  // Pass ?force=1 to regenerate QR (invalidates previous one)
   app.get('/api/whatsapp/qr', async (req, res) => {
     if (!whatsapp) {
       return res.status(503).json({ error: 'WhatsApp not configured' });
     }
-    // Fetch a fresh QR code from Evolution API (QR expires quickly)
+    const force = req.query.force === '1' || req.query.force === 'true';
     let qr = null;
     if (typeof whatsapp.fetchFreshQr === 'function') {
-      qr = await whatsapp.fetchFreshQr();
+      qr = await whatsapp.fetchFreshQr(force);
     }
     if (!qr) {
       qr = whatsapp.getStatus().qr;
