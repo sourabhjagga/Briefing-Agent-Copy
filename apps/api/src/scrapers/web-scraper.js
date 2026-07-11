@@ -32,11 +32,16 @@ class WebScraper {
 
   async scrape() {
     const allSources = this.database.getAllSources();
-    const targets = allSources.filter(
-      s => s.is_active && ['forums', 'reddit'].some(t => s.type.endsWith(t)) && s.url
-    );
+    const targets = allSources.filter(s => {
+      if (!s.is_active) return false;
+      const isReddit = s.type.endsWith('reddit');
+      const isForum = s.type.endsWith('forums');
+      if (!isForum && !isReddit) return false;
+      if (isForum && !s.url) return false;
+      return true;
+    });
     if (targets.length === 0) {
-      logger.warn('⚠️ No active web sources with URLs found in database.');
+      logger.warn('⚠️ No active web sources found in database.');
       return;
     }
 
@@ -45,7 +50,9 @@ class WebScraper {
       page = await browserManager.newPage();
 
       for (const target of targets) {
-        const siteKey = this._getSiteKey(target.source_id);
+        const siteKey = target.type.endsWith('reddit')
+          ? 'reddit'
+          : this._getSiteKey(target.source_id);
         const config = this.siteConfig[siteKey] || { alertThreshold: 3, cookiesSite: siteKey };
 
         await this._injectCookies(page, config.cookiesSite);
