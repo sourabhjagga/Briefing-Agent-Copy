@@ -1,3 +1,18 @@
+# =============================================================================
+# HARDENING
+#   Every service drops ALL Linux capabilities and re-adds only the essential
+#   ones, enables no-new-privileges, and gets tmpfs for /tmp. Rootfs is
+#   read-only where the image only writes to mounted volumes + tmpfs.
+#
+#   Port exposure: postgres (5432), redis (6379) and evolution-api (8080) are
+#   INTERNAL ONLY (reachable via Docker DNS by service name). They are no
+#   longer published to 0.0.0.0. Only cc-brief-agent keeps a published port.
+#
+#   cc-brief-agent / evolution-api: NOT read-only — the agent image runs as
+#   root and spawns Chromium (needs writable cache/scratch outside /tmp), and
+#   evolution-api writes session data under its instance dir.
+# =============================================================================
+
 services:
   cc-brief-agent:
     # Pull pre-built image from Docker Hub instead of building from source.
@@ -10,6 +25,20 @@ services:
     pull_policy: always
     container_name: cc-brief-agent
     restart: unless-stopped
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+      - SETUID
+      - SETGID
+      - NET_BIND_SERVICE
+      - SYS_PTRACE
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp:rw,size=256m
     depends_on:
       warp-proxy:
         condition: service_healthy
@@ -68,6 +97,17 @@ services:
     image: ghcr.io/mon-ius/docker-warp-socks:v6
     container_name: warp-proxy
     restart: unless-stopped
+    # wireguard-go needs NET_ADMIN to create the tunnel interface.
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+      - NET_BIND_SERVICE
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp:rw,size=64m
     healthcheck:
       test: ["CMD-SHELL", "nc -z localhost 9091 || exit 1"]
       interval: 15s
@@ -79,8 +119,21 @@ services:
     image: evoapicloud/evolution-api:latest
     container_name: evolution-api
     restart: unless-stopped
-    ports:
-      - "8080:8080"
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+      - SETUID
+      - SETGID
+      - NET_BIND_SERVICE
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp:rw,size=128m
+    expose:
+      - "8080"
     environment:
       - SERVER_TYPE=http
       - SERVER_URL=http://evolution-api:8080
@@ -114,12 +167,26 @@ services:
     image: postgres:15-alpine
     container_name: evolution-postgres
     restart: unless-stopped
+    read_only: true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+      - SETUID
+      - SETGID
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp:rw,size=64m
+      - /run/postgresql:rw,size=32m
     environment:
       - POSTGRES_USER=evolution
       - POSTGRES_PASSWORD=evolution
       - POSTGRES_DB=evolution
-    ports:
-      - "5432:5432"
+    expose:
+      - "5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -132,8 +199,21 @@ services:
     image: redis:7-alpine
     container_name: evolution-redis
     restart: unless-stopped
-    ports:
-      - "6379:6379"
+    read_only: true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+      - SETUID
+      - SETGID
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp:rw,size=64m
+    expose:
+      - "6379"
     volumes:
       - redis_data:/data
     healthcheck:
