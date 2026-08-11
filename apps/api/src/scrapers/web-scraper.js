@@ -195,13 +195,27 @@ class WebScraper {
               cookieString = cookiesArray.map(c => `${c.name}=${c.value}`).join('; ');
             }
 
-            const response = await axios.get(rssUrl, {
-              headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                'Cookie': cookieString
-              },
-              timeout: 10000
-            });
+            // Retry transient 5xx/network errors (Technofino returns 503 under load).
+            let response = null;
+            for (let attempt = 1; attempt <= 3; attempt++) {
+              try {
+                response = await axios.get(rssUrl, {
+                  headers: {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                    'Cookie': cookieString
+                  },
+                  timeout: 10000
+                });
+                break;
+              } catch (rssRetryErr) {
+                const status = rssRetryErr.response?.status;
+                if (attempt === 3 || (status && status < 500 && status !== 429)) {
+                  throw rssRetryErr;
+                }
+                logger.warn(`⏳ RSS fetch attempt ${attempt}/3 failed (${status || rssRetryErr.message}), retrying in ${attempt * 2}s...`);
+                await new Promise(r => setTimeout(r, attempt * 2000));
+              }
+            }
 
             const $rss = cheerio.load(response.data, { xmlMode: true });
             $rss('item').each((i, el) => {
@@ -392,12 +406,13 @@ class WebScraper {
       target.id, target.type, `reddit_${sub}`, target.name, 'forum'
     );
 
-    // Layer 1: Direct Reddit RSS feed (no auth, reliable)
-    let success = await this._scrapeViaRSS(sub, target.type, target.name, instanceId);
+    // Layer order: authenticated Puppeteer first (proven reliable, 884 ingests),
+    // native RSS as fallback. Reddit's public .rss endpoint is rate-limited/
+    // inconsistent for automated clients, so it should not be the primary path.
+    let success = await this._scrapeViaCookies(sub, target.type, target.name, page, instanceId);
 
-    // Layer 2: Authenticated Puppeteer scraper (if cookies available)
     if (!success) {
-      success = await this._scrapeViaCookies(sub, target.type, target.name, page, instanceId);
+      success = await this._scrapeViaRSS(sub, target.type, target.name, instanceId);
     }
 
     this.database.upsertScraperHealth(

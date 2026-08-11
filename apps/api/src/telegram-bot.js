@@ -409,7 +409,7 @@ class TelegramBotDispatcher {
     const msg =
       `🟢 <b>${this.sourcePrefix === 'cc' ? 'CC' : 'Hot Deals'} Brief Agent Started</b>\n\n` +
       `📱 Monitoring <b>${allSources.length}</b> active sources\n` +
-      `🌐 All scrapers fully operational (Puppeteer-free)\n` +
+      `🌐 All scrapers fully operational\n` +
       `⏰ Scheduled briefings: 6 AM, 2 PM &amp; 10 PM IST\n\n` +
       `📅 ${today} | 🕘 ${time}\n\n` +
       `Type /help to see commands or /status to inspect active groups.`;

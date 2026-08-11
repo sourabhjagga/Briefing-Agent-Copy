@@ -97,6 +97,21 @@ constructor(database, onAlert) {
         return false;
       }
     } catch (err) {
+      const isAuthKeyUnregistered = String(err.errorMessage || err.message || '').includes('AUTH_KEY_UNREGISTERED') || String(err.message || '').includes('AUTH_KEY_UNREGISTERED');
+      if (isAuthKeyUnregistered) {
+        logger.error('⚠️ Telegram session invalidated (AUTH_KEY_UNREGISTERED). Clearing stored session — dashboard re-login required.');
+        try {
+          if (fs.existsSync(this.sessionPath)) {
+            fs.unlinkSync(this.sessionPath);
+            logger.info('Removed invalidated Telegram session file.');
+          }
+        } catch (e) { /* ignore */ }
+        this.session = new StringSession('');
+        if (this.onAlert) {
+          this.onAlert('⚠️ <b>Telegram User Session Invalidated</b>\n\nThe Telegram user session (AUTH_KEY_UNREGISTERED) has expired. Please re-login via the Web Dashboard.');
+        }
+        return false;
+      }
       logger.error(`Telegram User client start failed: ${err.message}`);
       return false;
     }

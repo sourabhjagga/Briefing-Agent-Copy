@@ -48,6 +48,10 @@ class WhatsAppListener {
     this.chatNameMap = {};
     // Guard flag to prevent concurrent session-wipe+restart cycles
     this._sessionWipeInProgress = false;
+
+    // Guard flag to prevent concurrent start() calls from creating
+    // overlapping sockets (health-check + connection.update + manual restarts).
+    this._startInProgress = false;
     
     // Hardened Baileys: reconnection state
     this._reconnectAttempts = 0;
@@ -65,6 +69,12 @@ class WhatsAppListener {
     // Connection health monitoring
     this._healthCheckInterval = null;
     this._lastHealthCheck = 0;
+
+    // Discovery rate-limit: full group/newsletter sync at most once per hour.
+    // Running it on every reconnect is what triggers WhatsApp rate-overlimit
+    // and the 60s "Timed Out" newsletters query every ~70s.
+    this._lastDiscoveryTime = 0;
+    this._discoveryCooldownMs = 60 * 60 * 1000;
     
     // Load cached chat names
     if (fs.existsSync(this.chatNameMapFile)) {
@@ -132,17 +142,21 @@ class WhatsAppListener {
    */
   _performHealthCheck() {
     if (!this.sock || !this.isReady) return;
-    
+    if (this._startInProgress) return; // a reconnect is already underway
+
     const now = Date.now();
     if (now - this._lastHealthCheck < 30000) return;
     this._lastHealthCheck = now;
-    
+
     try {
       if (this.sock.ws && this.sock.ws.readyState !== 1) {
         logger.warn('WebSocket connection stale (readyState !== OPEN), forcing reconnect...');
-        this.sock.end(new Error('health-check-stale-connection')).catch(() => {});
         this.isReady = false;
-        this.start();
+        // Do NOT call start() here. Ending the socket fires connection.update
+        // 'close', whose handler schedules the reconnect with backoff. Calling
+        // start() directly races that handler and creates overlapping sockets,
+        // which rejects in-flight requests with "Boom: Connection Closed".
+        this.sock.end(new Error('health-check-stale-connection')).catch(() => {});
       }
     } catch (e) {
       logger.debug(`Health check error: ${e.message}`);
@@ -241,6 +255,11 @@ class WhatsAppListener {
   }
 
   async start() {
+    if (this._startInProgress) {
+      logger.warn('start() already in progress — skipping concurrent call.');
+      return;
+    }
+    this._startInProgress = true;
     logger.info('Initializing WhatsApp Baileys socket client...');
     try {
       const { state, saveCreds } = await useMultiFileAuthState(this.authPath);
@@ -452,10 +471,12 @@ class WhatsAppListener {
         }
       });
 
+      this._startInProgress = false;
     } catch (err) {
       // Handle "Over 2000 messages into the future" on startup gracefully
       if (err.message && err.message.includes('Over 2000 messages into the future')) {
         logger.warn(`Startup counter mismatch (recoverable), continuing: ${err.message}`);
+        this._startInProgress = false;
         return;
       }
       if (isSessionCorruptionError(err)) {
@@ -464,6 +485,7 @@ class WhatsAppListener {
         logger.error(`Failed to start WhatsApp socket client: ${err.message}`);
         setTimeout(() => this.start(), 30000);
       }
+      this._startInProgress = false;
     }
   }
 
@@ -529,6 +551,13 @@ class WhatsAppListener {
   }
 
   async _discoverChats() {
+    const now = Date.now();
+    if (now - this._lastDiscoveryTime < this._discoveryCooldownMs) {
+      logger.debug('Skipping chat discovery (rate-limited, ran recently).');
+      return;
+    }
+    this._lastDiscoveryTime = now;
+
     logger.info('Syncing WhatsApp participating chats...');
     try {
       const groups = await this.sock.groupFetchAllParticipating();
@@ -548,21 +577,31 @@ class WhatsAppListener {
     try {
       logger.info('Fetching subscribed WhatsApp newsletters/channels...');
       let newsletters = null;
-      if (typeof this.sock.newsletterGetSubscribed === 'function') {
-        newsletters = await this.sock.newsletterGetSubscribed();
-      } else if (typeof this.sock.query === 'function') {
-        const result = await this.sock.query({
-          tag: 'iq',
-          attrs: { to: '@s.whatsapp.net', xmlns: 'w:mex', type: 'get' },
-          content: [{ tag: 'query', attrs: {}, content: [{ tag: 'list_type', attrs: { v: '2' } }] }]
-        });
-        if (result?.content) {
-          newsletters = result.content.map(c => ({
+      const fetchPromise = (async () => {
+        if (typeof this.sock.newsletterGetSubscribed === 'function') {
+          return await this.sock.newsletterGetSubscribed();
+        }
+        if (typeof this.sock.query === 'function') {
+          const result = await this.sock.query({
+            tag: 'iq',
+            attrs: { to: '@s.whatsapp.net', xmlns: 'w:mex', type: 'get' },
+            content: [{ tag: 'query', attrs: {}, content: [{ tag: 'list_type', attrs: { v: '2' } }] }]
+          });
+          return result?.content ? result.content.map(c => ({
             id: c.attrs?.id || c.attrs?.jid,
             name: c.attrs?.name || c.attrs?.subject || 'WhatsApp Channel'
-          })).filter(n => n.id);
+          })).filter(n => n.id) : null;
         }
-      }
+        return null;
+      })();
+
+      // Bound the query with a hard timeout so a hanging request can never
+      // block the process or pile up as unhandled rejections.
+      newsletters = await Promise.race([
+        fetchPromise,
+        new Promise((_, reject) => setTimeout(() => reject(new Error('newsletter sync timed out')), 30000))
+      ]);
+
       if (newsletters?.length > 0) {
         newsletters.forEach(n => {
           const id = (n.id || n.jid).toLowerCase();

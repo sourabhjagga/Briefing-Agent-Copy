@@ -18,6 +18,18 @@ const fs = require('fs');
 const crypto = require('crypto');
 
 const logger = require('./logger');
+
+// CRASH GUARDS — never let a stray rejected promise or uncaught exception
+// take down the whole process. The WhatsApp (Baileys) socket and external
+// integrations frequently throw asynchronously; without these handlers a
+// single rejection restarts the entire agent. Log loudly, keep running.
+process.on('unhandledRejection', (reason) => {
+  logger.error(`Unhandled Promise Rejection: ${reason instanceof Error ? reason.stack : JSON.stringify(reason)}`);
+});
+process.on('uncaughtException', (err) => {
+  logger.error(`Uncaught Exception: ${err.stack || err}`);
+});
+
 const MessageDatabase = require('./database');
 const EvolutionApiClient = require('./evolution-client');
 const WhatsAppListener = require('./whatsapp');

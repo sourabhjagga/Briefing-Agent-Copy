@@ -23,6 +23,9 @@ class YoutubeScraper {
     this.summarizer = summarizer;
     this.checkInterval = 60 * 60 * 1000; // Hourly check
     this.intervalId = null;
+    // Track consecutive fatal errors (404/deleted channel) per source so we can
+    // auto-deactivate dead channels instead of retrying them forever.
+    this.consecutiveFatal = {};
     this.userAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
     
     // Initialize standard Gemini client for audio transcription using process.env.GEMINI_API_KEY
@@ -64,6 +67,7 @@ class YoutubeScraper {
   async scrapeChannel(source) {
     try {
       let channelId = source.source_id.trim();
+      if (source.name) source.name = source.name.trim();
 
       // Resolve handles/URLs dynamically via Axios
       if (!channelId.startsWith('UC') || channelId.length !== 24) {
@@ -98,12 +102,29 @@ class YoutubeScraper {
           timeout: 15000
         });
       } catch (httpErr) {
-        if (httpErr.response?.status === 404) {
-          logger.warn(`⚠️ YouTube channel "${source.name}" (${channelId}) not found (404). Channel may have been deleted or ID is invalid. Consider removing from dashboard.`);
-          this.database.upsertScraperHealth(source.source_id, source.type, false, 'Channel not found (404)');
-        } else if (httpErr.response?.status === 403) {
+        const status = httpErr.response?.status;
+        const fatal = status === 404 || status === 410 || status === 500 || status === 503;
+        if (fatal) {
+          this.consecutiveFatal[source.id] = (this.consecutiveFatal[source.id] || 0) + 1;
+          const strikes = this.consecutiveFatal[source.id];
+          if (status === 404) {
+            logger.warn(`⚠️ YouTube channel "${source.name}" (${channelId}) not found (404). Channel may have been deleted or ID is invalid.`);
+          } else {
+            logger.warn(`⚠️ YouTube channel "${source.name}" (${channelId}) HTTP ${status}.`);
+          }
+          this.database.upsertScraperHealth(source.source_id, source.type, false,
+            status === 404 ? 'Channel not found (404)' : `HTTP ${status}`);
+          // Auto-deactivate sources that fail fatally 3 times in a row (dead channel).
+          if (strikes >= 3 && this.database.toggleSource) {
+            logger.error(`❌ YouTube channel "${source.name}" failed ${strikes} consecutive times (${status}). Auto-deactivating source.`);
+            this.database.toggleSource(source.id, false);
+            this.database.upsertScraperHealth(source.source_id, source.type, false, 'Auto-deactivated (dead channel)');
+            delete this.consecutiveFatal[source.id];
+          }
+        } else if (status === 403) {
           logger.warn(`⚠️ YouTube channel "${source.name}" (${channelId}) access forbidden (403). May be private or restricted.`);
           this.database.upsertScraperHealth(source.source_id, source.type, false, 'Access forbidden (403)');
+          this.consecutiveFatal[source.id] = 0;
         } else {
           logger.error(`❌ HTTP error scraping YouTube RSS for "${source.name}": ${httpErr.message}`);
           this.database.upsertScraperHealth(source.source_id, source.type, false, httpErr.message);
@@ -231,7 +252,7 @@ class YoutubeScraper {
       // Build yt-dlp arguments
       const ytdlpArgs = [
         `https://www.youtube.com/watch?v=${videoId}`,
-        '--format', 'bestaudio[abr<=48]/worstaudio/bestaudio', // Prefer tiny audio stream
+        '--format', 'bestaudio/worstaudio/best', // Prefer audio, no strict bitrate filter (causes "format not available")
         '--extract-audio',
         '--audio-format', 'm4a',
         '--audio-quality', '9',            // Lowest quality = smallest file

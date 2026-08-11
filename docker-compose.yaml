@@ -116,7 +116,9 @@ services:
       start_period: 15s
 
   evolution-api:
-    image: evoapicloud/evolution-api:latest
+    # Pinned to v2.3.7 (latest stable release, 2025-12-05). Do NOT use :latest —
+    # it tracks release candidates (2.4.0-rc) which are unstable for production.
+    image: evoapicloud/evolution-api:v2.3.7
     container_name: evolution-api
     restart: unless-stopped
     cap_drop:
