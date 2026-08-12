@@ -173,8 +173,12 @@ class Scheduler {
         
         if (deliveryJid) {
           try {
-            await this.whatsapp.sendMessage(deliveryJid, plainSummary);
-            logger.info(`✅ WhatsApp briefing sent to delivery target: ${deliveryJid}`);
+            const sent = await this.whatsapp.sendMessage(deliveryJid, plainSummary);
+            if (sent) {
+              logger.info(`✅ WhatsApp briefing sent to delivery target: ${deliveryJid}`);
+            } else {
+              logger.warn(`⚠️ WhatsApp briefing NOT sent to ${deliveryJid} (connection not ready or send failed).`);
+            }
           } catch (err) {
             logger.error(`Failed to send WhatsApp briefing to ${deliveryJid}: ${err.message}`);
           }

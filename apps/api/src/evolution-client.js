@@ -396,17 +396,21 @@ class EvolutionApiClient {
   }
 
   async sendMessage(jid, text) {
-    if (!this.isReady) {
-      logger.warn(`Evolution API not ready, skipping message to ${jid}`);
+    // Re-poll live connection state so a dropped socket is detected instead of using stale isReady
+    const state = await this.getConnectionState();
+    if (state !== 'open' && state !== 'connected') {
+      this.isReady = false;
+      logger.warn(`Evolution API not ready (state: ${state}), skipping message to ${jid}`);
       return false;
+    }
+    if (!this.isReady) {
+      this.isReady = true;
     }
 
     try {
       await this.http.post(`/message/sendText/${this.instanceName}`, {
         number: jid.replace('@s.whatsapp.net', '').replace('@g.us', ''),
-        textMessage: {
-          text: text
-        },
+        text: text,
         delay: 1000,
         linkPreview: false
       });
