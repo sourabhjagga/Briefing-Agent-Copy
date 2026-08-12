@@ -1063,6 +1063,30 @@ function startDashboardServer(database, whatsapp, telegramUser, scheduler, summa
     }
   });
 
+  // Reset WhatsApp connection (delete + recreate instance for fresh QR) — clears stale/removed session
+  app.delete('/api/admin/reset-whatsapp', async (req, res) => {
+    try {
+      if (!evolutionClient) {
+        return res.status(503).json({ error: 'Evolution API not configured' });
+      }
+      await evolutionClient.resetInstance();
+      // Give Evolution a moment to generate the QR after recreation
+      await new Promise(r => setTimeout(r, 3000));
+      const qr = await evolutionClient.fetchFreshQr(true);
+      const state = await evolutionClient.getConnectionState();
+      logger.info('WhatsApp instance reset - new QR generated');
+      res.json({
+        success: true,
+        message: 'WhatsApp connection reset. Scan the new QR to re-pair.',
+        qr: qr || null,
+        state
+      });
+    } catch (err) {
+      logger.error(`Reset WhatsApp failed: ${err.message}`);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   app.get('/api/cookies/status', (req, res) => {
     const cookieSites = database.getAllCookieSites();
     const seen = new Set();

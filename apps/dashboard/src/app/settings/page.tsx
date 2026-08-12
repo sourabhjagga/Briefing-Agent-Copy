@@ -45,6 +45,20 @@ export default function SettingsPage() {
     onError: (err: Error) => toast(err.message, 'error'),
   });
 
+  const resetWhatsappMutation = useMutation({
+    mutationFn: () =>
+      apiRequest<{ success: boolean; message: string }>('/api/admin/reset-whatsapp', { method: 'DELETE' }),
+    onSuccess: (data) => toast(data.message ?? 'WhatsApp connection reset', 'success'),
+    onError: (err: Error) => toast(err.message, 'error'),
+  });
+
+  const restartWhatsappMutation = useMutation({
+    mutationFn: () =>
+      apiRequest<{ success: boolean; message: string }>('/api/admin/force-whatsapp-reconnect', { method: 'POST' }),
+    onSuccess: (data) => toast(data.message ?? 'WhatsApp connection restarted', 'success'),
+    onError: (err: Error) => toast(err.message, 'error'),
+  });
+
   return (
     <div className="flex-1 space-y-6">
       <div className="flex items-center justify-between">
@@ -135,8 +149,35 @@ export default function SettingsPage() {
               <p className="text-sm font-medium">Restart WhatsApp</p>
               <p className="text-xs text-muted-foreground">Restart the WhatsApp connection</p>
             </div>
-            <Button variant="outline" size="sm" disabled>
-              Unavailable
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                if (window.confirm('Restart the WhatsApp connection?')) {
+                  restartWhatsappMutation.mutate();
+                }
+              }}
+              disabled={restartWhatsappMutation.isPending}
+            >
+              {restartWhatsappMutation.isPending ? 'Restarting...' : 'Restart'}
+            </Button>
+          </div>
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm font-medium">Delete WhatsApp Connection</p>
+              <p className="text-xs text-muted-foreground">Clear the stale session and generate a fresh QR to re-pair</p>
+            </div>
+            <Button
+              variant="destructive"
+              size="sm"
+              onClick={() => {
+                if (window.confirm('Delete the WhatsApp connection and generate a new QR? You will need to re-scan from your phone.')) {
+                  resetWhatsappMutation.mutate();
+                }
+              }}
+              disabled={resetWhatsappMutation.isPending}
+            >
+              {resetWhatsappMutation.isPending ? 'Resetting...' : 'Delete & Re-pair'}
             </Button>
           </div>
         </div>

@@ -169,6 +169,21 @@ class EvolutionApiClient {
     return res.data;
   }
 
+  async resetInstance() {
+    logger.info(`Resetting Evolution API instance: ${this.instanceName}`);
+    this.isReady = false;
+    this.latestQr = null;
+    try {
+      await this.http.delete(`/instance/delete/${this.instanceName}`);
+    } catch (err) {
+      logger.debug(`Delete instance: ${err.message}`);
+    }
+    await new Promise(r => setTimeout(r, 3000));
+    await this._createInstance();
+    await this._connectInstance();
+    return true;
+  }
+
   async _connectInstance() {
     try {
       await this.http.get(`/instance/connect/${this.instanceName}`);
