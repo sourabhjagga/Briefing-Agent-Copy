@@ -69,6 +69,11 @@ class WhatsAppListener {
     // Connection health monitoring
     this._healthCheckInterval = null;
     this._lastHealthCheck = 0;
+    // Consecutive non-open health checks before forcing a reconnect.
+    // Guards against transient states (e.g. a socket mid-handshake) killing
+    // a healthy connection on a single blip.
+    this._staleCheckCount = 0;
+    this._maxStaleChecks = 2;
 
     // Discovery rate-limit: full group/newsletter sync at most once per hour.
     // Running it on every reconnect is what triggers WhatsApp rate-overlimit
@@ -149,14 +154,35 @@ class WhatsAppListener {
     this._lastHealthCheck = now;
 
     try {
-      if (this.sock.ws && this.sock.ws.readyState !== 1) {
-        logger.warn('WebSocket connection stale (readyState !== OPEN), forcing reconnect...');
+      // Baileys >= 6.7 wraps the raw WebSocket in a WebSocketClient exposing
+      // isOpen/isClosed getters (raw ws lives at .socket). Older versions expose
+      // the raw WebSocket directly. Normalize both into a boolean "isOpen".
+      const wsClient = this.sock.ws;
+      let isOpen = false;
+      if (wsClient) {
+        if (typeof wsClient.isOpen === 'boolean') {
+          isOpen = wsClient.isOpen;
+        } else if (typeof wsClient.readyState === 'number') {
+          isOpen = wsClient.readyState === 1; // WebSocket.OPEN
+        }
+      }
+
+      if (!isOpen) {
+        this._staleCheckCount++;
+        if (this._staleCheckCount < this._maxStaleChecks) {
+          logger.warn(`WebSocket not open (check ${this._staleCheckCount}/${this._maxStaleChecks}), waiting to confirm stale before forcing reconnect...`);
+          return;
+        }
+        this._staleCheckCount = 0;
+        logger.warn('WebSocket connection stale (not OPEN for consecutive checks), forcing reconnect...');
         this.isReady = false;
         // Do NOT call start() here. Ending the socket fires connection.update
         // 'close', whose handler schedules the reconnect with backoff. Calling
         // start() directly races that handler and creates overlapping sockets,
         // which rejects in-flight requests with "Boom: Connection Closed".
         this.sock.end(new Error('health-check-stale-connection')).catch(() => {});
+      } else {
+        this._staleCheckCount = 0;
       }
     } catch (e) {
       logger.debug(`Health check error: ${e.message}`);
